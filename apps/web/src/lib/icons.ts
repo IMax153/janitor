@@ -64,7 +64,7 @@ const nodeToAttributes = <M>(
 
 const defaultIconClass = "size-4 shrink-0"
 
-export const icon = <M>(h: HtmlBuilder<M>, node: IconNode, className = defaultIconClass): Html =>
+export const view = <M>(h: HtmlBuilder<M>, node: IconNode, className = defaultIconClass): Html =>
   h.svg(
     svgAttributes(className, h),
     node.map(([tag, attrs]) => svgElement(tag, h)(nodeToAttributes(attrs, h))),

@@ -31,8 +31,8 @@ export default defineConfig({
     cache: true,
 
     tasks: {
-      "dev:web": {
-        command: "vp -C apps/web dev",
+      dev: {
+        command: "vp exec alchemy dev",
         cache: false,
       },
     },

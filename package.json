@@ -3,11 +3,6 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": {
-    "ready": "vp check && vp run -r test && vp run -r build",
-    "dev": "vp run website#dev",
-    "prepare": "vp config && effect-tsgo patch --typescript --oxlint"
-  },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/tsgo": "catalog:",

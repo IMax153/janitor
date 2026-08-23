@@ -3,8 +3,9 @@ import { Command, Runtime } from "foldkit"
 import type { Document, HtmlBuilder } from "foldkit/html"
 import { defineMessageUnion } from "foldkit/message"
 import { evo } from "foldkit/struct"
-
-import { Button } from "@foldkit/ui"
+import * as Button from "@/components/ui/button"
+import * as Icon from "@/lib/icons"
+import { Minus, Plus } from "lucide"
 
 // MODEL
 
@@ -38,40 +39,26 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => [{ count: 0 }
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: `Counter: ${model.count}`,
   body: h.div(
-    [h.Class("min-h-screen bg-white flex flex-col items-center justify-center gap-6 p-6")],
+    [h.Class("min-h-screen flex flex-col items-center justify-center gap-6 p-6")],
     [
       h.p([h.Class("text-6xl font-bold text-gray-800")], [model.count.toString()]),
       h.div(
         [h.Class("flex flex-wrap justify-center gap-4")],
         [
-          Button.view(
-            {
-              onClick: Message.ClickedDecrement(),
-              toView: (attributes) => h.button([...attributes.button, h.Class(buttonStyle)], ["-"]),
-            },
-            h,
-          ),
-          Button.view(
-            {
-              onClick: Message.ClickedReset(),
-              toView: (attributes) =>
-                h.button([...attributes.button, h.Class(buttonStyle)], ["Reset"]),
-            },
-            h,
-          ),
-          Button.view(
-            {
-              onClick: Message.ClickedIncrement(),
-              toView: (attributes) => h.button([...attributes.button, h.Class(buttonStyle)], ["+"]),
-            },
-            h,
-          ),
+          Button.view(h, {
+            label: Icon.view(h, Minus),
+            onClick: Message.ClickedDecrement(),
+          }),
+          Button.view(h, {
+            label: "Reset",
+            onClick: Message.ClickedReset(),
+          }),
+          Button.view(h, {
+            label: Icon.view(h, Plus),
+            onClick: Message.ClickedIncrement(),
+          }),
         ],
       ),
     ],
   ),
 })
-
-// STYLE
-
-const buttonStyle = "bg-black text-white hover:bg-gray-700 px-4 py-2 transition"
