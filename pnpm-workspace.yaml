@@ -1,0 +1,59 @@
+packages:
+  - apps/*
+  - packages/*
+  - tools/*
+
+catalogMode: prefer
+
+catalog:
+  "@effect/platform-browser": 4.0.0-rc.111
+  "@effect/platform-node": 4.0.0-rc.111
+  "@effect/tsgo": ^0.36.5
+  "@foldkit/devtools": ^0.150.0
+  "@foldkit/devtools-mcp": ^0.17.0
+  "@foldkit/oxlint-plugin": ^0.6.0
+  "@foldkit/ui": ^0.150.0
+  "@foldkit/vite-plugin": ^0.17.0
+  "@tailwindcss/vite": ^4.3.3
+  "@types/node": ^24
+  alchemy: 2.0.0-beta.74
+  effect: 4.0.0-rc.111
+  foldkit: ^0.150.0
+  tailwindcss: ^4.3.3
+  typescript: ^7.0.2
+  vite: npm:@voidzero-dev/vite-plus-core@0.2.9
+  vite-plus: ^0.2.9
+
+overrides:
+  "@effect/platform-node": "catalog:"
+  effect: "catalog:"
+  vite: "catalog:"
+
+peerDependencyRules:
+  allowAny:
+    - vite
+  allowedVersions:
+    vite: "*"
+
+allowBuilds:
+  msgpackr-extract: false
+  sharp: false
+  workerd: true
+
+minimumReleaseAgeExclude:
+  - "@alchemy.run/cloudflare-runtime@2.0.0-beta.74"
+  - "@alchemy.run/floci@2.0.0-beta.74"
+  - "@alchemy.run/node-utils@2.0.0-beta.74"
+  - "@distilled.cloud/aws@1.0.0-rc.6"
+  - "@distilled.cloud/axiom@1.0.0-rc.6"
+  - "@distilled.cloud/cloudflare@1.0.0-rc.6"
+  - "@distilled.cloud/core@1.0.0-rc.6"
+  - "@distilled.cloud/fly-io@1.0.0-rc.6"
+  - "@distilled.cloud/hetzner@1.0.0-rc.6"
+  - "@distilled.cloud/neon@1.0.0-rc.6"
+  - "@distilled.cloud/planetscale@1.0.0-rc.6"
+  - alchemy@2.0.0-beta.74
+  - "@foldkit/ui@0.149.0 || 0.150.0"
+  - "@foldkit/vite-plugin@0.16.2 || 0.17.0"
+  - foldkit@0.149.0 || 0.150.0
+  - "@foldkit/devtools@0.150.0"

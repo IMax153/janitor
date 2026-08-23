@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "foldkit": {
+      "enabled": true,
+      "type": "local",
+      "command": ["pnpm", "exec", "foldkit-devtools-mcp"]
+    }
+  },
+  "references": {
+    "alchemy": {
+      "repository": "alchemy-run/alchemy",
+      "branch": "main",
+      "description": "Use for understanding how to use Alchemy"
+    },
+    "effect": {
+      "repository": "Effect-TS/effect",
+      "branch": "main",
+      "description": "Use for understanding how to use Effect"
+    },
+    "foldkit": {
+      "repository": "foldkit/foldkit",
+      "branch": "main",
+      "description": "Use for understanding how to use Foldkit"
+    }
+  }
+}
