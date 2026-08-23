@@ -7,14 +7,19 @@
   },
   "dependencies": {
     "@foldkit/ui": "catalog:",
+    "@fontsource-variable/geist": "catalog:",
+    "clsx": "catalog:",
     "effect": "catalog:",
-    "foldkit": "catalog:"
+    "foldkit": "catalog:",
+    "lucide": "catalog:",
+    "tailwind-merge": "catalog:"
   },
   "devDependencies": {
     "@foldkit/devtools": "catalog:",
     "@foldkit/vite-plugin": "catalog:",
     "@tailwindcss/vite": "catalog:",
     "tailwindcss": "catalog:",
+    "tw-animate-css": "catalog:",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   }

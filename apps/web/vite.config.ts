@@ -4,6 +4,11 @@ import { defineConfig } from "vite-plus"
 
 export default defineConfig({
   plugins: [tailwindcss(), foldkit({ devToolsMcpPort: 9988 })],
+  resolve: {
+    alias: {
+      "@": new URL("./src", import.meta.url).pathname,
+    },
+  },
   optimizeDeps: {
     entries: ["src/entry.ts"],
   },

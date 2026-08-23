@@ -21,8 +21,5 @@
   "engines": {
     "node": ">=24"
   },
-  "packageManager": "pnpm@11.20.0",
-  "registries": {
-    "@foldcn": "https://foldcn.elianiva.com/r/{name}.json"
-  }
+  "packageManager": "pnpm@11.20.0"
 }
