@@ -6,6 +6,7 @@
     "dev": "vite"
   },
   "dependencies": {
+    "@effect/platform-browser": "catalog:",
     "@foldkit/ui": "catalog:",
     "@fontsource-variable/geist": "catalog:",
     "clsx": "catalog:",

@@ -60,3 +60,6 @@ minimumReleaseAgeExclude:
   - "@foldkit/vite-plugin@0.16.2 || 0.17.0"
   - alchemy@2.0.0-beta.74
   - foldkit@0.150.0
+
+patchedDependencies:
+  foldkit@0.150.0: patches/foldkit@0.150.0.patch

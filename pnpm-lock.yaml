@@ -205,6 +205,9 @@ settings:
 
 catalogs:
   default:
+    '@effect/platform-browser':
+      specifier: 4.0.0-rc.111
+      version: 4.0.0-rc.111
     '@effect/platform-node':
       specifier: 4.0.0-rc.111
       version: 4.0.0-rc.111
@@ -263,6 +266,9 @@ catalogs:
 overrides:
   vite: npm:@voidzero-dev/vite-plus-core@0.2.9
 
+patchedDependencies:
+  foldkit@0.150.0: c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7
+
 importers:
 
   .:
@@ -294,9 +300,12 @@ importers:
 
   apps/web:
     dependencies:
+      '@effect/platform-browser':
+        specifier: 'catalog:'
+        version: 4.0.0-rc.111(effect@4.0.0-rc.111)
       '@foldkit/ui':
         specifier: 'catalog:'
-        version: 0.150.0(effect@4.0.0-rc.111)(foldkit@0.150.0(effect@4.0.0-rc.111))
+        version: 0.150.0(effect@4.0.0-rc.111)(foldkit@0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111))
       '@fontsource-variable/geist':
         specifier: 'catalog:'
         version: 5.3.0
@@ -308,7 +317,7 @@ importers:
         version: 4.0.0-rc.111
       foldkit:
         specifier: 'catalog:'
-        version: 0.150.0(effect@4.0.0-rc.111)
+        version: 0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111)
       lucide:
         specifier: 'catalog:'
         version: 1.33.0
@@ -318,10 +327,10 @@ importers:
     devDependencies:
       '@foldkit/devtools':
         specifier: 'catalog:'
-        version: 0.150.0(@effect/platform-browser@4.0.0-rc.111(effect@4.0.0-rc.111))(@foldkit/ui@0.150.0(effect@4.0.0-rc.111)(foldkit@0.150.0(effect@4.0.0-rc.111)))(effect@4.0.0-rc.111)(foldkit@0.150.0(effect@4.0.0-rc.111))
+        version: 0.150.0(@effect/platform-browser@4.0.0-rc.111(effect@4.0.0-rc.111))(@foldkit/ui@0.150.0(effect@4.0.0-rc.111)(foldkit@0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111)))(effect@4.0.0-rc.111)(foldkit@0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111))
       '@foldkit/vite-plugin':
         specifier: 'catalog:'
-        version: 0.17.0(@voidzero-dev/vite-plus-core@0.2.9(@types/node@26.2.0)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.0))(effect@4.0.0-rc.111)(foldkit@0.150.0(effect@4.0.0-rc.111))
+        version: 0.17.0(@voidzero-dev/vite-plus-core@0.2.9(@types/node@26.2.0)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.0))(effect@4.0.0-rc.111)(foldkit@0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111))
       '@tailwindcss/vite':
         specifier: 'catalog:'
         version: 4.3.3(@voidzero-dev/vite-plus-core@0.2.9(@types/node@26.2.0)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.0))
@@ -3568,13 +3577,13 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
-  '@foldkit/devtools@0.150.0(@effect/platform-browser@4.0.0-rc.111(effect@4.0.0-rc.111))(@foldkit/ui@0.150.0(effect@4.0.0-rc.111)(foldkit@0.150.0(effect@4.0.0-rc.111)))(effect@4.0.0-rc.111)(foldkit@0.150.0(effect@4.0.0-rc.111))':
+  '@foldkit/devtools@0.150.0(@effect/platform-browser@4.0.0-rc.111(effect@4.0.0-rc.111))(@foldkit/ui@0.150.0(effect@4.0.0-rc.111)(foldkit@0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111)))(effect@4.0.0-rc.111)(foldkit@0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111))':
     dependencies:
       '@effect/platform-browser': 4.0.0-rc.111(effect@4.0.0-rc.111)
-      '@foldkit/ui': 0.150.0(effect@4.0.0-rc.111)(foldkit@0.150.0(effect@4.0.0-rc.111))
+      '@foldkit/ui': 0.150.0(effect@4.0.0-rc.111)(foldkit@0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111))
       clsx: 2.1.1
       effect: 4.0.0-rc.111
-      foldkit: 0.150.0(effect@4.0.0-rc.111)
+      foldkit: 0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111)
 
   '@foldkit/oxlint-plugin@0.6.0(effect@4.0.0-rc.111)':
     dependencies:
@@ -3582,16 +3591,16 @@ snapshots:
     transitivePeerDependencies:
       - effect
 
-  '@foldkit/ui@0.150.0(effect@4.0.0-rc.111)(foldkit@0.150.0(effect@4.0.0-rc.111))':
+  '@foldkit/ui@0.150.0(effect@4.0.0-rc.111)(foldkit@0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111))':
     dependencies:
       '@floating-ui/dom': 1.8.0
       effect: 4.0.0-rc.111
-      foldkit: 0.150.0(effect@4.0.0-rc.111)
+      foldkit: 0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111)
 
-  '@foldkit/vite-plugin@0.17.0(@voidzero-dev/vite-plus-core@0.2.9(@types/node@26.2.0)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.0))(effect@4.0.0-rc.111)(foldkit@0.150.0(effect@4.0.0-rc.111))':
+  '@foldkit/vite-plugin@0.17.0(@voidzero-dev/vite-plus-core@0.2.9(@types/node@26.2.0)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.0))(effect@4.0.0-rc.111)(foldkit@0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111))':
     dependencies:
       effect: 4.0.0-rc.111
-      foldkit: 0.150.0(effect@4.0.0-rc.111)
+      foldkit: 0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111)
       magic-string: 0.30.21
       vite: '@voidzero-dev/vite-plus-core@0.2.9(@types/node@26.2.0)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.0)'
       ws: 8.21.3
@@ -4817,7 +4826,7 @@ snapshots:
     dependencies:
       to-regex-range: 5.0.1
 
-  foldkit@0.150.0(effect@4.0.0-rc.111):
+  foldkit@0.150.0(patch_hash=c80dba3a76693c8d9d7e57aca19c6e305c04945e26deb7d1a7ca30628be094f7)(effect@4.0.0-rc.111):
     dependencies:
       effect: 4.0.0-rc.111
       parse5: 8.0.1
