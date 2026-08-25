@@ -261,7 +261,7 @@ const menuItem = (
   h.div(
     [
       h.Class(
-        "flex gap-2 items-center px-3 py-2 bg-card hover:bg-muted dark:hover:bg-input/50 transition-colors",
+        "flex items-center gap-2 bg-card px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted dark:hover:bg-input/50",
       ),
     ],
     [
@@ -283,12 +283,13 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
       ariaLabel: "Theme",
       buttonContent: menuItemIcon(h, model.resolvedTheme),
       buttonClassName:
-        "px-3 py-3 hover:bg-muted dark:hover:bg-input/50 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 rounded-lg cursor-pointer rounded-lg cursor-pointer transition-colors",
-      itemsClassName: "w-full max-w-36 cursor-pointer rounded-md bg-card py-1 ring ring-border",
+        "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium outline-none transition-all hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:hover:bg-accent/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+      itemsClassName:
+        "z-50 w-full max-w-36 cursor-pointer rounded-md bg-card py-1 ring ring-border",
       itemToConfig: (item) => ({
         content: menuItem(h, model.preferredTheme, item),
       }),
-      backdropClassName: "fixed inset-0",
+      backdropClassName: "fixed inset-0 z-40",
     },
   }),
 )

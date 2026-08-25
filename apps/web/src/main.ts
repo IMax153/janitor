@@ -9,15 +9,13 @@ import { defineMessageUnion } from "foldkit/message"
 import { evo } from "foldkit/struct"
 import * as Subscription from "foldkit/subscription"
 import * as Update from "foldkit/update"
-import { Minus, Plus } from "lucide"
-import * as Button from "@/components/ui/button"
+import * as Sidebar from "@/components/ui/sidebar"
 import * as ThemeSwitcher from "@/components/theme-switcher"
-import * as Icon from "@/lib/icons"
 
 // MODEL
 
 export const Model = Schema.Struct({
-  count: Schema.Number,
+  sidebar: Sidebar.Model,
   theme: ThemeSwitcher.Model,
 })
 export type Model = typeof Model.Type
@@ -25,9 +23,9 @@ export type Model = typeof Model.Type
 // MESSAGE
 
 export const Message = defineMessageUnion({
-  ClickedDecrement: {},
-  ClickedIncrement: {},
-  ClickedReset: {},
+  GotSidebarMessage: {
+    message: Sidebar.Message,
+  },
   GotThemeSwitcherMessage: {
     message: ThemeSwitcher.Message,
   },
@@ -48,6 +46,13 @@ export const flags = Effect.gen(function* () {
 
 // UPDATE
 
+const foldSidebar = Update.foldChild({
+  update: Sidebar.update,
+  read: (model: Model) => Option.some(model.sidebar),
+  write: (model, next) => evo(model, { sidebar: () => next }),
+  toParentMessage: (message) => Message.GotSidebarMessage({ message }),
+})
+
 const foldThemeSwitcher = Update.foldChild({
   update: ThemeSwitcher.update,
   read: (model: Model) => Option.some(model.theme),
@@ -56,23 +61,20 @@ const foldThemeSwitcher = Update.foldChild({
 })
 
 export const update = (model: Model, message: Message) =>
-  Message.match<Update.Return<Model, Message, AppResources>>(message, {
-    ClickedDecrement: () => [evo(model, { count: (count) => count - 1 }), []],
-    ClickedIncrement: () => [evo(model, { count: (count) => count + 1 }), []],
-    ClickedReset: () => [evo(model, { count: () => 0 }), []],
+  Message.match<Update.Return<Model, Message, AppServices>>(message, {
+    GotSidebarMessage: ({ message }) => foldSidebar(model, message),
     GotThemeSwitcherMessage: ({ message }) => foldThemeSwitcher(model, message),
   })
 
 // INIT
 
-export type AppResources = KeyValueStore.KeyValueStore
+export type AppServices = KeyValueStore.KeyValueStore
 
-export const init: Runtime.ApplicationInit<Model, Message, Flags, AppResources> = (
-  flags: Flags,
-) => {
+export const init: Runtime.ApplicationInit<Model, Message, Flags, AppServices> = (flags: Flags) => {
   const [theme, themeCommands] = ThemeSwitcher.init(flags.theme)
+  const sidebar = Sidebar.init({ id: "app-sidebar" })
   return [
-    { count: 0, theme },
+    { sidebar, theme },
     [
       ...Command.mapMessages(themeCommands, (message) =>
         Message.GotThemeSwitcherMessage({ message }),
@@ -83,47 +85,83 @@ export const init: Runtime.ApplicationInit<Model, Message, Flags, AppResources> 
 
 // SUBSCRIPTIONS
 
-export const subscriptions = Subscription.lift(ThemeSwitcher.subscriptions)<Model, Message>({
+const sidebarSubscriptions = Subscription.lift(Sidebar.subscriptions)<Model, Message>({
+  toChildModel: (model) => model.sidebar,
+  toParentMessage: (message) => Message.GotSidebarMessage({ message }),
+})
+
+const themeSubscriptions = Subscription.lift(ThemeSwitcher.subscriptions)<Model, Message>({
   toChildModel: (model) => model.theme,
   toParentMessage: (message) => Message.GotThemeSwitcherMessage({ message }),
 })
 
+export const subscriptions = Subscription.aggregate<Model, Message, AppServices>()(
+  sidebarSubscriptions,
+  themeSubscriptions,
+)
+
 // VIEW
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
-  title: `Counter: ${model.count}`,
-  body: h.div(
-    [h.Class("min-h-screen flex flex-col items-center justify-center gap-6 p-6")],
-    [
-      h.div(
-        [],
-        [
-          h.submodel({
-            slotId: "theme-switcher",
-            model: model.theme,
-            view: ThemeSwitcher.view,
-            toParentMessage: (message) => Message.GotThemeSwitcherMessage({ message }),
-          }),
-        ],
-      ),
-      h.p([h.Class("text-6xl font-bold text-foreground")], [model.count.toString()]),
-      h.div(
-        [h.Class("flex flex-wrap justify-center gap-4")],
-        [
-          Button.view(h, {
-            label: Icon.view(h, Minus),
-            onClick: Message.ClickedDecrement(),
-          }),
-          Button.view(h, {
-            label: "Reset",
-            onClick: Message.ClickedReset(),
-          }),
-          Button.view(h, {
-            label: Icon.view(h, Plus),
-            onClick: Message.ClickedIncrement(),
-          }),
-        ],
-      ),
-    ],
-  ),
+  title: "The Jailer",
+  body: h.submodel({
+    slotId: "app-sidebar",
+    model: model.sidebar,
+    view: Sidebar.view,
+    toParentMessage: (message) => Message.GotSidebarMessage({ message }),
+    viewInputs: {
+      side: "left",
+      variant: "inset",
+      collapsible: "icon",
+      content: () => [
+        Sidebar.header(h, { children: ["Header"] }),
+        Sidebar.content(h, { children: ["Content"] }),
+        Sidebar.footer(h, { children: ["Footer"] }),
+      ],
+      children: (slots) => [
+        Sidebar.inset(h, {
+          children: [
+            h.header(
+              [
+                h.Class(
+                  "flex h-12 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear",
+                ),
+              ],
+              [
+                h.div(
+                  [h.Class("w-full flex justify-between px-4 lg:px-6")],
+                  [
+                    h.div(
+                      [h.Class("flex items-center gap-1 lg:gap-2")],
+                      [
+                        Sidebar.trigger(h, {
+                          attributes: slots.trigger,
+                          className: "-ml-1",
+                        }),
+                        Sidebar.separator(h, { className: "h-4 w-px" }),
+                        h.span(
+                          [h.Class("text-sm font-medium")],
+                          [
+                            slots.state === "collapsed"
+                              ? "Collapsed — hover the icons or press ⌘B"
+                              : "Acme Inc — Playground / Starred",
+                          ],
+                        ),
+                      ],
+                    ),
+                    h.submodel({
+                      slotId: "theme-switcher",
+                      model: model.theme,
+                      view: ThemeSwitcher.view,
+                      toParentMessage: (message) => Message.GotThemeSwitcherMessage({ message }),
+                    }),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        }),
+      ],
+    },
+  }),
 })

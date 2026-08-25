@@ -1,5 +1,5 @@
-import { BrowserKeyValueStore } from "@effect/platform-browser"
-import { Runtime } from "foldkit"
+import * as BrowserKeyValueStore from "@effect/platform-browser/BrowserKeyValueStore"
+import * as Runtime from "foldkit/runtime"
 
 import { Flags, Message, Model, flags, init, subscriptions, update, view } from "./main"
 
