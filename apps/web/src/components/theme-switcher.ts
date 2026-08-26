@@ -123,14 +123,14 @@ export const init = (flags: Flags): UpdateReturn => {
 
   const resolvedTheme = resolveTheme(flags)
 
-  return [
-    Model.make({
+  return {
+    model: Model.make({
       ...flags,
       menu,
       resolvedTheme,
     }),
-    [ApplyTheme({ theme: resolvedTheme })],
-  ]
+    commands: [ApplyTheme({ theme: resolvedTheme })],
+  }
 }
 
 // UPDATE
@@ -146,13 +146,13 @@ const foldMenuOutMessage = Match.type<Menu.OutMessage<ThemePreference>>().pipe(
           systemTheme: model.systemTheme,
         })
 
-        return [
-          evo(model, {
+        return {
+          model: evo(model, {
             resolvedTheme: () => resolvedTheme,
             preferredTheme: () => value,
           }),
-          [PersistThemePreference({ preference: value })],
-        ] as const
+          commands: [PersistThemePreference({ preference: value })],
+        }
       },
   }),
 )
@@ -177,13 +177,12 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         systemTheme: theme,
       })
 
-      return [
-        evo(model, {
+      return {
+        model: evo(model, {
           systemTheme: () => theme,
           resolvedTheme: () => resolvedTheme,
         }),
-        [],
-      ]
+      }
     },
     SelectedThemePreference: ({ preference }) => {
       const resolvedTheme = resolveTheme({
@@ -191,16 +190,16 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         systemTheme: model.systemTheme,
       })
 
-      return [
-        evo(model, {
+      return {
+        model: evo(model, {
           preferredTheme: () => preference,
           resolvedTheme: () => resolvedTheme,
         }),
-        [PersistThemePreference({ preference })],
-      ]
+        commands: [PersistThemePreference({ preference })],
+      }
     },
-    CompletedApplyTheme: () => [model, []],
-    CompletedSaveThemePreference: () => [model, []],
+    CompletedApplyTheme: () => ({ model }),
+    CompletedSaveThemePreference: () => ({ model }),
   })
 
 // SUBSCRIPTIONS

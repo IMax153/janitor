@@ -64,16 +64,16 @@ export const update = (model: Model, message: Message) =>
 export type AppServices = KeyValueStore.KeyValueStore
 
 export const init: Runtime.ApplicationInit<Model, Message, Flags, AppServices> = (flags: Flags) => {
-  const [theme, themeCommands] = ThemeSwitcher.init(flags.theme)
+  const theme = ThemeSwitcher.init(flags.theme)
   const sidebar = Sidebar.init({ id: "app-sidebar" })
-  return [
-    { sidebar, theme },
-    [
-      ...Command.mapMessages(themeCommands, (message) =>
+  return {
+    model: Model.make({ sidebar, theme: theme.model }),
+    commands: [
+      ...Command.mapMessages(theme.commands, (message) =>
         Message.GotThemeSwitcherMessage({ message }),
       ),
     ],
-  ]
+  }
 }
 
 const sidebarSubscriptions = Subscription.lift(Sidebar.subscriptions)<Model, Message>({

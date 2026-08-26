@@ -6,21 +6,21 @@ packages:
 catalogMode: prefer
 
 catalog:
-  "@effect/platform-browser": 4.0.0-rc.111
-  "@effect/platform-node": 4.0.0-rc.111
-  "@effect/tsgo": ^0.36.5
-  "@foldkit/devtools": ^0.150.0
-  "@foldkit/devtools-mcp": ^0.17.0
-  "@foldkit/oxlint-plugin": ^0.6.0
-  "@foldkit/ui": ^0.150.0
-  "@foldkit/vite-plugin": ^0.17.0
+  "@effect/platform-browser": 4.0.0-rc.112
+  "@effect/platform-node": 4.0.0-rc.112
+  "@effect/tsgo": ^0.37.0
+  "@foldkit/devtools": ^0.152.0
+  "@foldkit/devtools-mcp": ^0.18.0
+  "@foldkit/oxlint-plugin": ^0.8.0
+  "@foldkit/ui": ^0.152.0
+  "@foldkit/vite-plugin": ^0.18.0
   "@fontsource-variable/geist": ^5.3.0
   "@tailwindcss/vite": ^4.3.3
   "@types/node": ^24
   alchemy: 2.0.0-beta.74
   clsx: ^2.1.1
-  effect: 4.0.0-rc.111
-  foldkit: ^0.150.0
+  effect: 4.0.0-rc.112
+  foldkit: ^0.152.0
   lucide: ^1.33.0
   tailwind-merge: ^3.6.0
   tailwindcss: ^4.3.3
@@ -39,7 +39,6 @@ peerDependencyRules:
     vite: "*"
 
 allowBuilds:
-  msgpackr-extract: false
   sharp: false
   workerd: true
 
@@ -55,11 +54,8 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/hetzner@1.0.0-rc.6"
   - "@distilled.cloud/neon@1.0.0-rc.6"
   - "@distilled.cloud/planetscale@1.0.0-rc.6"
-  - "@foldkit/devtools@0.150.0"
-  - "@foldkit/ui@0.149.0 || 0.150.0"
-  - "@foldkit/vite-plugin@0.16.2 || 0.17.0"
+  - "@foldkit/devtools@0.152.0"
+  - "@foldkit/ui@0.152.0"
+  - "@foldkit/vite-plugin@0.18.0"
   - alchemy@2.0.0-beta.74
-  - foldkit@0.150.0
-
-patchedDependencies:
-  foldkit@0.150.0: patches/foldkit@0.150.0.patch
+  - foldkit@0.152.0

@@ -84,11 +84,11 @@ export const setOpen = (model: Model, isOpen: boolean): Model =>
 
 const mapSheet = (
   model: Model,
-  [next, commands]: Update.ReturnWithOutMessage<Sheet.Model, Sheet.Message, Sheet.OutMessage>,
-): Update.Return<Model, Message> => [
-  evo(model, { sheet: () => next }),
-  Command.mapMessages(commands, (message) => Message.GotSheetMessage({ message })),
-]
+  update: Update.ReturnWithOutMessage<Sheet.Model, Sheet.Message, Sheet.OutMessage>,
+): Update.Return<Model, Message> => ({
+  model: evo(model, { sheet: () => update.model }),
+  commands: Command.mapMessages(update.commands, (message) => Message.GotSheetMessage({ message })),
+})
 
 export const openMobile = (model: Model): Update.Return<Model, Message> =>
   mapSheet(model, Sheet.open(model.sheet))
@@ -101,9 +101,9 @@ export const toggle = (model: Model): Update.Return<Model, Message> =>
     ? model.sheet.isOpen
       ? closeMobile(model)
       : openMobile(model)
-    : [setOpen(model, !model.isOpen), []]
+    : { model: setOpen(model, !model.isOpen) }
 
-const foldNoOpStep = (): Update.Step<Model, Message> => (model) => [model, []]
+const foldNoOpStep = (): Update.Step<Model, Message> => (model) => ({ model })
 
 const foldSheetOutMessage = Match.type<Sheet.OutMessage>().pipe(
   Match.withReturnType<Update.Step<Model, Message>>(),
@@ -124,8 +124,8 @@ const foldSheet = Update.foldChild({
 export const update = (model: Model, message: Message): Update.Return<Model, Message> =>
   Message.match(message, {
     Toggled: () => toggle(model),
-    SetIsOpen: ({ isOpen }) => [setOpen(model, isOpen), []],
-    SetIsMobile: ({ isMobile }) => [evo(model, { isMobile: () => isMobile }), []],
+    SetIsOpen: ({ isOpen }) => ({ model: setOpen(model, isOpen) }),
+    SetIsMobile: ({ isMobile }) => ({ model: evo(model, { isMobile: () => isMobile }) }),
     GotSheetMessage: ({ message }) => foldSheet(model, message),
   })
 
@@ -287,7 +287,7 @@ export const view = defineView<Model, Message, ViewInputs>((model, viewInputs, h
       side,
       panelClass: sidebarMobilePanelClass,
       content: (sheetH, { description, title }) => [
-        h.div(
+        sheetH.div(
           [h.Class("sr-only flex flex-col")],
           [
             Sheet.title(sheetH, {
@@ -300,6 +300,7 @@ export const view = defineView<Model, Message, ViewInputs>((model, viewInputs, h
             }),
           ],
         ),
+        ...viewInputs.content(slots),
       ],
     })
     return h.div(
@@ -319,6 +320,7 @@ export const view = defineView<Model, Message, ViewInputs>((model, viewInputs, h
           viewInputs: mobileSheetInputs,
           toParentMessage: (message) => Message.GotSheetMessage({ message }),
         }),
+        ...viewInputs.children(slots),
       ],
     )
   }
