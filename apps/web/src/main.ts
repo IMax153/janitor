@@ -9,9 +9,11 @@ import { defineMessageUnion } from "foldkit/message"
 import { evo } from "foldkit/struct"
 import * as Subscription from "foldkit/subscription"
 import * as Update from "foldkit/update"
+import { ChevronsUpDown } from "lucide"
 import * as JanitorIcon from "@/components/janitor-icon"
 import * as Sidebar from "@/components/ui/sidebar"
 import * as ThemeSwitcher from "@/components/theme-switcher"
+import * as Icon from "@/lib/icons"
 
 export const Model = Schema.Struct({
   sidebar: Sidebar.Model,
@@ -89,28 +91,51 @@ export const subscriptions = Subscription.aggregate<Model, Message, AppServices>
   themeSubscriptions,
 )
 
-const sidebarBrand = (h: HtmlBuilder<Message>): Html =>
-  h.a(
-    [h.Href("/"), h.Class("flex h-8 w-full items-center gap-2 overflow-hidden")],
+const repositorySwitcher = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
+  JanitorIcon.view(h, { className: "size-8 shrink-0 rounded-lg" }),
+  h.span(
+    [h.Class("grid min-w-0 flex-1 text-left text-sm leading-tight")],
     [
-      JanitorIcon.view(h, { className: "size-8 shrink-0 rounded-lg" }),
-      h.span(
-        [
-          h.Class(
-            "grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden",
-          ),
+      h.span([h.Class("truncate font-semibold")], ["The Janitor"]),
+      h.span([h.Class("text-muted-foreground truncate text-xs")], ["Repository Maintenance"]),
+    ],
+  ),
+]
+
+const sidebarMenu = (h: HtmlBuilder<Message>): Html =>
+  Sidebar.menu(h, {
+    children: [
+      Sidebar.menuItem(h, {
+        children: [
+          Sidebar.menuButton(h, {
+            size: "lg",
+            className:
+              "data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground",
+            children: [...repositorySwitcher(h), Icon.view(h, ChevronsUpDown, "ml-auto")],
+          }),
         ],
-        [
-          h.span([h.Class("truncate font-semibold")], ["The Janitor"]),
-          h.span([h.Class("text-muted-foreground truncate text-xs")], ["Repository Maintenance"]),
+      }),
+    ],
+  })
+
+const navMain = (h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [],
+    [
+      Sidebar.group(h, {
+        children: [
+          Sidebar.groupLabel(h, { children: ["Platform"] }),
+          Sidebar.menu(h, {
+            children: ["hi"],
+          }),
         ],
-      ),
+      }),
     ],
   )
 
 const sidebarPanel = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
-  Sidebar.header(h, { children: [sidebarBrand(h)] }),
-  Sidebar.content(h, { children: ["Content"] }),
+  Sidebar.header(h, { children: [sidebarMenu(h)] }),
+  Sidebar.content(h, { children: [navMain(h)] }),
   Sidebar.footer(h, { children: ["Footer"] }),
 ]
 
@@ -165,7 +190,7 @@ const sidebarContent = (
 ]
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
-  title: "The Jailer",
+  title: "The Janitor",
   body: h.submodel({
     slotId: "app-sidebar",
     model: model.sidebar,

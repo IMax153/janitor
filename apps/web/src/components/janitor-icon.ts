@@ -11,7 +11,12 @@ export const view = <M>(h: HtmlBuilder<M>, config: JanitorIconConfig): Html =>
   h.span(
     [
       h.DataAttribute("slot", "janitor-icon"),
-      h.Class(cn("relative block overflow-hidden", config.className)),
+      h.Class(
+        cn(
+          "relative block overflow-hidden border border-black/10 shadow-sm dark:border-white/15",
+          config.className,
+        ),
+      ),
     ],
     [
       h.img([
