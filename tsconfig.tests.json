@@ -20,8 +20,9 @@
     "types": ["node"],
     "paths": {
       // These path aliases allow us to load internal modules in tests and to use other workspace packages in tests
-      // that would otherwise be considered cyclic dependencies (e.g. loading `@effect/sql-sqlite-node` in the test
-      // suite of `@effect/platform-node` which itself depends on `@effect/platform-node`).
+      // that would otherwise be considered cyclic dependencies
+      "@janitor/domain": ["./packages/domain/src/index.ts"],
+      "@janitor/domain/*": ["./packages/domain/src/*.ts"]
     }
   }
 }

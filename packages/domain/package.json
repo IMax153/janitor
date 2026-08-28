@@ -1,0 +1,13 @@
+{
+  "name": "@janitor/domain",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:"
+  }
+}

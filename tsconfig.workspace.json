@@ -1,5 +1,9 @@
 {
   "extends": "./tsconfig.base.json",
   "include": ["alchemy.run.ts"],
-  "references": [{ "path": "apps/web" }]
+  "references": [
+    { "path": "apps/web" }, 
+    { "path": "apps/webhooks" }, 
+    { "path": "packages/domain" }
+  ]
 }

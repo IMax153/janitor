@@ -7,6 +7,8 @@
     "@effect/platform-node": "catalog:",
     "@effect/tsgo": "catalog:",
     "@foldkit/oxlint-plugin": "catalog:",
+    "@janitor/webhooks": "workspace:^",
+    "@types/node": "catalog:",
     "alchemy": "catalog:",
     "effect": "catalog:",
     "typescript": "catalog:",

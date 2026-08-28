@@ -22,8 +22,6 @@ The dormant Benny automation pack is not included because its Slack event runtim
 
 Read-only research and review agents deny edits. Implementation agents cannot push, merge, deploy, clean worktrees, or communicate externally by instruction. The primary workflow requires explicit approval for those actions.
 
-Run `vp run check:pstack` to validate names, frontmatter, command wrappers, required agents, OpenCode config, and the absence of active Cursor-specific instructions.
-
 ## License
 
 The adapted pstack material remains available under the MIT License. See `LICENSE`.

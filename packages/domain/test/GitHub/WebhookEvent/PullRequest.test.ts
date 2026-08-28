@@ -1,0 +1,152 @@
+import { assert, describe, it } from "@effect/vitest"
+import { TestSchema } from "effect/testing"
+import { GitHubInstallationId, GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Repository"
+import { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/WebhookEvent/Base"
+import { GitHubWebhookEvent } from "@janitor/domain/GitHub/WebhookEvent"
+import { PullRequestWebhookPayload } from "@janitor/domain/GitHub/WebhookEvent/PullRequest"
+
+const payload = {
+  number: 42,
+  pull_request: {
+    id: 123,
+    number: 42,
+    node_id: "PR_kwDOExample",
+    title: "Fix repository cleanup",
+    body: null,
+    draft: false,
+    user: { login: "octocat" },
+    head: { sha: "a".repeat(40) },
+    base: { ref: "main" },
+  },
+  repository: {
+    id: 456,
+    full_name: "effect/janitor",
+  },
+  installation: { id: 789 },
+  sender: { id: 101, login: "hubot" },
+}
+
+const openedPayload: PullRequestWebhookPayload = {
+  number: 42,
+  pullRequest: {
+    id: 123,
+    number: 42,
+    nodeId: "PR_kwDOExample",
+    title: "Fix repository cleanup",
+    body: null,
+    draft: false,
+    user: { login: "octocat" },
+    head: { sha: "a".repeat(40) },
+    base: { ref: "main" },
+  },
+  repository: {
+    id: GitHubRepositoryDatabaseId.make("456"),
+    fullName: { owner: "effect", repo: "janitor" },
+  },
+  installation: { id: GitHubInstallationId.make("789") },
+  sender: { id: 101, login: "hubot" },
+  action: "opened",
+}
+
+describe("pull request webhook payload schema", () => {
+  it("decodes and normalizes an opened payload", async () => {
+    const decoding = new TestSchema.Asserts(PullRequestWebhookPayload).decoding()
+
+    await decoding.succeed({ ...payload, action: "opened" }, openedPayload)
+  })
+
+  it("encodes an opened payload to GitHub wire keys", async () => {
+    const encoding = new TestSchema.Asserts(PullRequestWebhookPayload).encoding()
+
+    await encoding.succeed(openedPayload, {
+      ...payload,
+      repository: { id: 456, full_name: "effect/janitor" },
+      installation: { id: 789 },
+      action: "opened",
+    })
+  })
+
+  it("declares every supported action", () => {
+    assert.deepStrictEqual(PullRequestWebhookPayload.discriminants, [
+      "opened",
+      "reopened",
+      "synchronize",
+      "edited",
+      "ready_for_review",
+      "converted_to_draft",
+      "labeled",
+      "unlabeled",
+    ])
+  })
+
+  it("decodes synchronize and edited action data", async () => {
+    const decoding = new TestSchema.Asserts(PullRequestWebhookPayload).decoding()
+    const before = "b".repeat(40)
+    const after = "c".repeat(40)
+
+    await decoding.succeed(
+      { ...payload, action: "synchronize", before, after },
+      { ...openedPayload, action: "synchronize", before, after },
+    )
+    await decoding.succeed(
+      {
+        ...payload,
+        action: "edited",
+        changes: { title: { from: "Old title" } },
+      },
+      {
+        ...openedPayload,
+        action: "edited",
+        changes: { title: { from: "Old title" } },
+      },
+    )
+  })
+
+  it("requires label data for label actions", async () => {
+    const decoding = new TestSchema.Asserts(PullRequestWebhookPayload).decoding()
+
+    await decoding.fail({ ...payload, action: "labeled" }, 'Missing key\n  at ["label"]')
+  })
+
+  it("decodes labeled and unlabeled action data", async () => {
+    const decoding = new TestSchema.Asserts(PullRequestWebhookPayload).decoding()
+    const label = { id: 202, name: "bug" }
+
+    await decoding.succeed(
+      { ...payload, action: "labeled", label },
+      { ...openedPayload, action: "labeled", label },
+    )
+    await decoding.succeed(
+      { ...payload, action: "unlabeled", label },
+      { ...openedPayload, action: "unlabeled", label },
+    )
+  })
+
+  it("rejects unsupported actions with a useful message", async () => {
+    const decoding = new TestSchema.Asserts(PullRequestWebhookPayload).decoding()
+
+    await decoding.fail(
+      { ...payload, action: "closed" },
+      "Unsupported or malformed pull request webhook action",
+    )
+  })
+})
+
+describe("pull request webhook event schema", () => {
+  it("decodes the delivery envelope", async () => {
+    const decoding = new TestSchema.Asserts(GitHubWebhookEvent).decoding()
+
+    await decoding.succeed(
+      {
+        id: "delivery-123",
+        name: "pull_request",
+        payload: { ...payload, action: "opened" },
+      },
+      {
+        id: GitHubWebhookDeliveryId.make("delivery-123"),
+        name: "pull_request",
+        payload: openedPayload,
+      },
+    )
+  })
+})
