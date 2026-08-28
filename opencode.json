@@ -1,5 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "subagent_depth": 2,
   "mcp": {
     "foldkit": {
       "enabled": true,
@@ -16,7 +17,7 @@
     "effect": {
       "repository": "Effect-TS/effect",
       "branch": "main",
-      "description": "Use for understanding how to use Effect"
+      "description": "Use for understanding how to use Effect. Always read the LLMS.md."
     },
     "foldkit": {
       "repository": "foldkit/foldkit",
