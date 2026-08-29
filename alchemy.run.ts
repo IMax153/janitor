@@ -2,7 +2,7 @@ import * as Alchemy from "alchemy"
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as Effect from "effect/Effect"
 
-import WebhookWorker from "@janitor/webhooks/worker"
+import WebhookWorker from "@janitor/webhooks/Worker"
 
 export default Alchemy.Stack(
   "Janitor",

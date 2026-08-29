@@ -1,4 +1,5 @@
 import { GitHubWebhookEvent } from "@janitor/domain/GitHub/WebhookEvent"
+import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
@@ -7,8 +8,8 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import * as HttpServerError from "effect/unstable/http/HttpServerError"
 import { constUndefined } from "effect/Function"
-import { WebhookVerifier } from "../WebhookVerifier"
-import { GitHubEventQueue } from "./EventQueue"
+import * as WebhookVerifier from "../WebhookVerifier.ts"
+import * as GitHubEventQueue from "./EventQueue.ts"
 
 export const MAX_GITHUB_WEBHOOK_BODY_BYTES = 1024 * 1024
 
@@ -29,10 +30,14 @@ const payloadTooLargeResponse = HttpServerResponse.text("Payload Too Large", {
   status: 413,
 })
 
+const GitHubWebhookVerifier = WebhookVerifier.layer({
+  secret: Config.redacted("GITHUB_WEBHOOK_SECRET"),
+})
+
 export const GitHubWebHookLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const queue = yield* GitHubEventQueue
-    const verifier = yield* WebhookVerifier
+    const queue = yield* GitHubEventQueue.GitHubEventQueue
+    const verifier = yield* WebhookVerifier.WebhookVerifier
 
     const decodeWebhookEvent = Schema.decodeUnknownEffect(GitHubWebhookEvent)
 
@@ -124,4 +129,4 @@ export const GitHubWebHookLayer = Layer.unwrap(
       }),
     )
   }),
-)
+).pipe(Layer.provide([GitHubEventQueue.layer, GitHubWebhookVerifier]))

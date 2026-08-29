@@ -1,4 +1,5 @@
 import { GitHubWebhookEvent } from "@janitor/domain/GitHub/WebhookEvent"
+import type { RuntimeContext } from "alchemy/RuntimeContext"
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
@@ -14,7 +15,9 @@ export class EnqueueError extends Data.TaggedError("EnqueueError")<{
 export class GitHubEventQueue extends Context.Service<
   GitHubEventQueue,
   {
-    readonly enqueue: (event: GitHubWebhookEvent) => Effect.Effect<void, EnqueueError>
+    readonly enqueue: (
+      event: GitHubWebhookEvent,
+    ) => Effect.Effect<void, EnqueueError, RuntimeContext>
   }
 >()("@janitor/webhooks/GitHub/EventQueue/GitHubEventQueue") {}
 
