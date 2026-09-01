@@ -31,7 +31,7 @@ const payloadTooLargeResponse = HttpServerResponse.text("Payload Too Large", {
 })
 
 const GitHubWebhookVerifier = WebhookVerifier.layer({
-  secret: Config.redacted("GITHUB_WEBHOOK_SECRET"),
+  secret: Config.Redacted("GITHUB_WEBHOOK_SECRET"),
 })
 
 export const GitHubWebHookLayer = Layer.unwrap(

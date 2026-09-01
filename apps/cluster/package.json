@@ -1,0 +1,19 @@
+{
+  "name": "@janitor/cluster",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": null,
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@effect/platform-cloudflare": "file:../../vendor/effect-platform-cloudflare-f4143802256d135864f15314fc37385e919999b1.tgz",
+    "@janitor/domain": "workspace:^",
+    "alchemy": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

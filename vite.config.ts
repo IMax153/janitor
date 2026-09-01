@@ -20,6 +20,15 @@ export default defineConfig({
       },
     ],
     rules: {
+      "eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+        },
+      ],
       "vite-plus/prefer-vite-plus-imports": "error",
     },
     options: {
