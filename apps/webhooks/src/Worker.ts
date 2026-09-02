@@ -36,6 +36,10 @@ export default class WebhookWorker extends Cloudflare.Worker<WebhookWorker>()(
       fetch: Effect.orElseSucceed(fetch, () => HttpServerResponse.empty({ status: 500 })),
     }
   }).pipe(
-    Effect.provide([Cloudflare.Queues.WriteQueueBinding, Cloudflare.Workers.RateLimitBinding]),
+    Effect.provide([
+      Cloudflare.Queues.WriteQueueBinding,
+      Cloudflare.R2.WriteBucketBinding,
+      Cloudflare.Workers.RateLimitBinding,
+    ]),
   ),
 ) {}

@@ -1,5 +1,6 @@
 import { GitHubWebhookEventName } from "@janitor/domain/GitHub/WebhookEvent"
 import {
+  GitHubWebhookBodyV1,
   GitHubWebhookName,
   GitHubWebhookEnvelopeV1,
   GitHubWebhookPayloadSha256,
@@ -17,11 +18,15 @@ import * as HttpServerError from "effect/unstable/http/HttpServerError"
 import { constFalse } from "effect/Function"
 import * as WebhookVerifier from "../WebhookVerifier.ts"
 import * as GitHubEventQueue from "./EventQueue.ts"
+import * as GitHubPayloadStore from "./PayloadStore.ts"
 import { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
 import * as Encoding from "effect/Encoding"
 import * as DateTime from "effect/DateTime"
 
 export const MAX_GITHUB_WEBHOOK_BODY_BYTES = 1024 * 1024
+
+// Queue messages cap at 128 KB and base64 adds a third; keep headroom for the envelope.
+export const MAX_INLINE_WEBHOOK_BODY_BYTES = 64 * 1024
 
 const GitHubHeaders = Schema.Struct({
   "content-length": Schema.optional(Schema.FiniteFromString.check(Schema.isInt())),
@@ -55,6 +60,7 @@ const GitHubWebhookVerifier = WebhookVerifier.layer({
 export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
   Effect.gen(function* () {
     const queue = yield* GitHubEventQueue.GitHubEventQueue
+    const store = yield* GitHubPayloadStore.GitHubPayloadStore
     const verifier = yield* WebhookVerifier.WebhookVerifier
 
     const parseJson = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString)
@@ -168,13 +174,34 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
           return acceptedResponse
         }
 
+        const payloadSha256 = yield* sha256Hex(body)
+
+        const envelopeBody: GitHubWebhookBodyV1 | undefined =
+          body.byteLength <= MAX_INLINE_WEBHOOK_BODY_BYTES
+            ? GitHubWebhookBodyV1.cases.Inline.make({ payload: body })
+            : yield* store.put({ deliveryId, body, sha256: payloadSha256 }).pipe(
+                Effect.map((key) => GitHubWebhookBodyV1.cases.R2.make({ key })),
+                Effect.catchCause(
+                  Effect.fnUntraced(function* (cause) {
+                    yield* Effect.logError("Failed to store GitHub webhook payload", cause).pipe(
+                      Effect.annotateLogs({ id: deliveryId, event: eventName }),
+                    )
+                    return undefined
+                  }),
+                ),
+              )
+
+        if (envelopeBody === undefined) {
+          return serviceUnavailableResponse
+        }
+
         const envelope: GitHubWebhookEnvelopeV1 = {
           schemaVersion: 1,
           deliveryId,
           eventName,
           receivedAt: yield* DateTime.now,
-          payloadSha256: yield* sha256Hex(body),
-          body: { _tag: "Inline", payload: body },
+          payloadSha256,
+          body: envelopeBody,
         }
 
         const enqueued = yield* queue.enqueue(envelope).pipe(
@@ -189,6 +216,19 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
           ),
         )
 
+        if (!enqueued && envelopeBody._tag === "R2") {
+          // Best effort: the lifecycle rule removes anything this misses.
+          yield* store.delete(envelopeBody.key).pipe(
+            Effect.catchCause(
+              Effect.fnUntraced(function* (cause) {
+                yield* Effect.logWarning("Failed to delete orphaned webhook payload", cause).pipe(
+                  Effect.annotateLogs({ id: deliveryId, key: envelopeBody.key }),
+                )
+              }),
+            ),
+          )
+        }
+
         return enqueued ? acceptedResponse : serviceUnavailableResponse
       }),
     )
@@ -196,5 +236,5 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
 )
 
 export const GitHubWebHookRoutesLayer = GitHubWebhookRoutesLayerNoDeps.pipe(
-  Layer.provide([GitHubEventQueue.layer, GitHubWebhookVerifier]),
+  Layer.provide([GitHubEventQueue.layer, GitHubPayloadStore.layer, GitHubWebhookVerifier]),
 )

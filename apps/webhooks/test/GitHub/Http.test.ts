@@ -5,10 +5,20 @@ import * as Effect from "effect/Effect"
 import * as Encoding from "effect/Encoding"
 import * as Layer from "effect/Layer"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
-import type { GitHubWebhookEnvelopeV1 } from "@janitor/domain/GitHub/WebhookEnvelope"
+import type {
+  GitHubWebhookEnvelopeV1,
+  GitHubWebhookR2ObjectKey,
+} from "@janitor/domain/GitHub/WebhookEnvelope"
 import { EnqueueError, GitHubEventQueue } from "@janitor/webhooks/GitHub/EventQueue"
 import { GitHubWebhookRoutesLayerNoDeps } from "@janitor/webhooks/GitHub/Http"
+import {
+  GitHubPayloadStore,
+  PayloadStoreError,
+  payloadKey,
+  type PutPayloadInput,
+} from "@janitor/webhooks/GitHub/PayloadStore"
 import { WebhookVerifier } from "@janitor/webhooks/WebhookVerifier"
+import { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
 
 const runtimeContext = RuntimeContext.RuntimeContext.of({
   Type: "Test",
@@ -19,19 +29,35 @@ const runtimeContext = RuntimeContext.RuntimeContext.of({
 })
 
 const validSignature = "sha256=" + "ab".repeat(32)
+const deliveryOneKey = payloadKey(GitHubWebhookDeliveryId.make("delivery-1"))
 
 const VerifierStub = Layer.succeed(WebhookVerifier, {
   verify: (signature) => Effect.succeed(signature === validSignature),
 })
 
+interface StoreStub {
+  readonly put?: (
+    input: PutPayloadInput,
+  ) => Effect.Effect<GitHubWebhookR2ObjectKey, PayloadStoreError>
+  readonly delete?: (key: GitHubWebhookR2ObjectKey) => Effect.Effect<void, PayloadStoreError>
+}
+
 const makeHandler = (
   enqueue: (envelope: GitHubWebhookEnvelopeV1) => Effect.Effect<void, EnqueueError>,
+  store: StoreStub = {},
 ) =>
   Effect.acquireRelease(
     Effect.sync(() =>
       HttpRouter.toWebHandler(
         GitHubWebhookRoutesLayerNoDeps.pipe(
-          Layer.provide([VerifierStub, Layer.succeed(GitHubEventQueue, { enqueue })]),
+          Layer.provide([
+            VerifierStub,
+            Layer.succeed(GitHubEventQueue, { enqueue }),
+            Layer.succeed(GitHubPayloadStore, {
+              put: store.put ?? ((input) => Effect.succeed(payloadKey(input.deliveryId))),
+              delete: store.delete ?? (() => Effect.void),
+            }),
+          ]),
         ),
         {
           disableLogger: true,
@@ -58,6 +84,9 @@ const headers = (overrides: Record<string, string> = {}) => ({
   "x-github-event": "pull_request",
   ...overrides,
 })
+
+const paddedJson = (byteLength: number) =>
+  new TextEncoder().encode(`{${" ".repeat(byteLength - 2)}}`)
 
 const sha256 = (bytes: Uint8Array<ArrayBuffer>) =>
   Effect.map(
@@ -238,19 +267,120 @@ describe("GitHubWebhookRoutes", () => {
   it.effect("accepts a body exactly at the limit", () =>
     Effect.gen(function* () {
       const envelopes: Array<GitHubWebhookEnvelopeV1> = []
-      const handler = yield* makeHandler((envelope) =>
-        Effect.sync(() => void envelopes.push(envelope)),
+      const inputs: Array<PutPayloadInput> = []
+      const handler = yield* makeHandler(
+        (envelope) => Effect.sync(() => void envelopes.push(envelope)),
+        {
+          put: (input) =>
+            Effect.sync(() => {
+              inputs.push(input)
+              return payloadKey(input.deliveryId)
+            }),
+        },
       )
-      const padding = " ".repeat(1024 * 1024 - 2)
-      const body = new TextEncoder().encode(`{${padding}}`)
+      const body = paddedJson(1024 * 1024)
 
       const response = yield* post(handler, { headers: headers(), body })
 
       assert.strictEqual(response.status, 202)
-      const envelope = envelopes[0]
-      assert.isDefined(envelope)
-      if (envelope === undefined || envelope.body._tag !== "Inline") return
-      assert.strictEqual(envelope.body.payload.byteLength, 1024 * 1024)
+      assert.strictEqual(inputs[0]?.body.byteLength, 1024 * 1024)
+      assert.deepStrictEqual(envelopes[0]?.body, { _tag: "R2", key: deliveryOneKey })
+    }),
+  )
+
+  it.effect("keeps bodies at the inline limit out of R2", () =>
+    Effect.gen(function* () {
+      const envelopes: Array<GitHubWebhookEnvelopeV1> = []
+      let puts = 0
+      const handler = yield* makeHandler(
+        (envelope) => Effect.sync(() => void envelopes.push(envelope)),
+        {
+          put: (input) =>
+            Effect.sync(() => {
+              puts++
+              return payloadKey(input.deliveryId)
+            }),
+        },
+      )
+      const body = paddedJson(64 * 1024)
+
+      const response = yield* post(handler, { headers: headers(), body })
+
+      assert.strictEqual(response.status, 202)
+      assert.strictEqual(puts, 0)
+      assert.strictEqual(envelopes[0]?.body._tag, "Inline")
+    }),
+  )
+
+  it.effect("stores bodies over the inline limit in R2 before enqueueing", () =>
+    Effect.gen(function* () {
+      const order: Array<string> = []
+      const inputs: Array<PutPayloadInput> = []
+      const envelopes: Array<GitHubWebhookEnvelopeV1> = []
+      const handler = yield* makeHandler(
+        (envelope) =>
+          Effect.sync(() => {
+            order.push("enqueue")
+            envelopes.push(envelope)
+          }),
+        {
+          put: (input) =>
+            Effect.sync(() => {
+              order.push("put")
+              inputs.push(input)
+              return payloadKey(input.deliveryId)
+            }),
+        },
+      )
+      const body = paddedJson(64 * 1024 + 1)
+
+      const response = yield* post(handler, { headers: headers(), body })
+
+      assert.strictEqual(response.status, 202)
+      assert.deepStrictEqual(order, ["put", "enqueue"])
+      assert.deepStrictEqual(inputs[0]?.body, body)
+      assert.strictEqual(inputs[0]?.sha256, yield* sha256(body))
+      assert.deepStrictEqual(envelopes[0]?.body, { _tag: "R2", key: deliveryOneKey })
+    }),
+  )
+
+  it.effect("returns 503 without enqueueing when the R2 write fails", () =>
+    Effect.gen(function* () {
+      let calls = 0
+      const handler = yield* makeHandler(() => Effect.sync(() => void calls++), {
+        put: (input) =>
+          Effect.fail(
+            new PayloadStoreError({
+              key: payloadKey(input.deliveryId),
+              cause: new Error("r2 down"),
+            }),
+          ),
+      })
+      const body = paddedJson(64 * 1024 + 1)
+
+      const response = yield* post(handler, { headers: headers(), body })
+
+      assert.strictEqual(response.status, 503)
+      assert.strictEqual(calls, 0)
+    }),
+  )
+
+  it.effect("deletes the stored payload when the queue write fails", () =>
+    Effect.gen(function* () {
+      const deleted: Array<string> = []
+      const handler = yield* makeHandler(
+        (envelope) =>
+          Effect.fail(
+            new EnqueueError({ deliveryId: envelope.deliveryId, cause: new Error("down") }),
+          ),
+        { delete: (key) => Effect.sync(() => void deleted.push(key)) },
+      )
+      const body = paddedJson(64 * 1024 + 1)
+
+      const response = yield* post(handler, { headers: headers(), body })
+
+      assert.strictEqual(response.status, 503)
+      assert.deepStrictEqual(deleted, ["github-webhooks/delivery-1"])
     }),
   )
 
