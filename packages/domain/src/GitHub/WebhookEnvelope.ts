@@ -16,18 +16,16 @@ export const GitHubWebhookR2ObjectKey = Schema.NonEmptyString.pipe(
 ).annotate({ identifier: "GitHubWebhookR2ObjectKey" })
 export type GitHubWebhookR2ObjectKey = typeof GitHubWebhookR2ObjectKey.Type
 
-export const GitHubWebhookBodyV1 = Schema.Union([
-  Schema.Struct({
-    _tag: Schema.Literal("Inline"),
+export const GitHubWebhookBodyV1 = Schema.TaggedUnion({
+  Inline: {
     payload: Schema.Uint8ArrayFromBase64,
     key: Schema.optionalKey(Schema.Never),
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal("R2"),
+  },
+  R2: {
     key: GitHubWebhookR2ObjectKey,
     payload: Schema.optionalKey(Schema.Never),
-  }),
-]).annotate({ identifier: "GitHubWebhookBodyV1" })
+  },
+}).annotate({ identifier: "GitHubWebhookBodyV1" })
 export type GitHubWebhookBodyV1 = typeof GitHubWebhookBodyV1.Type
 
 export const GitHubWebhookEnvelopeV1 = Schema.Struct({

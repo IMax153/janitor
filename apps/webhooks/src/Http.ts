@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
-import { GitHubWebHookLayer } from "./GitHub/Http.ts"
+import { GitHubWebHookRoutesLayer } from "./GitHub/Http.ts"
 import { RateLimitMiddlewareLayer } from "./Middleware.ts"
 
 const ApiRouterLayer = Layer.effect(
@@ -9,7 +9,7 @@ const ApiRouterLayer = Layer.effect(
   Effect.map(HttpRouter.HttpRouter, (router) => router.prefixed("/api/v1")),
 )
 
-export const RoutesLayer = GitHubWebHookLayer.pipe(
+export const RoutesLayer = GitHubWebHookRoutesLayer.pipe(
   Layer.provide(RateLimitMiddlewareLayer),
   Layer.provide(ApiRouterLayer),
 )

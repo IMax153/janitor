@@ -1,4 +1,9 @@
-import { GitHubWebhookEvent } from "@janitor/domain/GitHub/WebhookEvent"
+import { GitHubWebhookEventName } from "@janitor/domain/GitHub/WebhookEvent"
+import {
+  GitHubWebhookName,
+  GitHubWebhookEnvelopeV1,
+  GitHubWebhookPayloadSha256,
+} from "@janitor/domain/GitHub/WebhookEnvelope"
 import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -7,17 +12,20 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import * as HttpServerError from "effect/unstable/http/HttpServerError"
-import { constUndefined } from "effect/Function"
+import { constFalse, constUndefined } from "effect/Function"
 import * as WebhookVerifier from "../WebhookVerifier.ts"
 import * as GitHubEventQueue from "./EventQueue.ts"
+import { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
+import * as Encoding from "effect/Encoding"
+import * as DateTime from "effect/DateTime"
 
 export const MAX_GITHUB_WEBHOOK_BODY_BYTES = 1024 * 1024
 
 const GitHubHeaders = Schema.Struct({
   "content-length": Schema.optional(Schema.NumberFromString.check(Schema.isInt())),
   "x-hub-signature-256": Schema.NonEmptyString,
-  "x-github-delivery": Schema.NonEmptyString,
-  "x-github-event": Schema.NonEmptyString,
+  "x-github-delivery": GitHubWebhookDeliveryId,
+  "x-github-event": GitHubWebhookName,
 })
 
 const acceptedResponse = HttpServerResponse.text("Accepted", {
@@ -29,17 +37,26 @@ const invalidWebhookSignatureResponse = HttpServerResponse.text("Invalid Webhook
 const payloadTooLargeResponse = HttpServerResponse.text("Payload Too Large", {
   status: 413,
 })
+const serviceUnavailableResponse = HttpServerResponse.text("Service Unavailable", {
+  status: 503,
+  headers: { "Retry-After": "60" },
+})
 
 const GitHubWebhookVerifier = WebhookVerifier.layer({
   secret: Config.Redacted("GITHUB_WEBHOOK_SECRET"),
 })
 
-export const GitHubWebHookLayer = Layer.unwrap(
+export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
   Effect.gen(function* () {
     const queue = yield* GitHubEventQueue.GitHubEventQueue
     const verifier = yield* WebhookVerifier.WebhookVerifier
 
-    const decodeWebhookEvent = Schema.decodeUnknownEffect(GitHubWebhookEvent)
+    const isSupportedEventName = Schema.is(GitHubWebhookEventName)
+
+    const sha256Hex = Effect.fnUntraced(function* (body: Uint8Array<ArrayBuffer>) {
+      const digest = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", body))
+      return GitHubWebhookPayloadSha256.make(Encoding.encodeHex(new Uint8Array(digest)))
+    })
 
     return HttpRouter.add(
       "POST",
@@ -80,12 +97,12 @@ export const GitHubWebHookLayer = Layer.unwrap(
           return invalidWebhookSignatureResponse
         }
 
-        const payload = yield* Effect.orElseSucceed(
-          Effect.try(() => JSON.parse(new TextDecoder().decode(body))),
-          constUndefined,
+        const isJson = yield* Effect.try(() => JSON.parse(new TextDecoder().decode(body))).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(constFalse),
         )
 
-        if (payload === undefined) {
+        if (!isJson) {
           return yield* new HttpServerError.RequestParseError({
             request,
             description: "Invalid JSON payload",
@@ -94,39 +111,41 @@ export const GitHubWebHookLayer = Layer.unwrap(
 
         const deliveryId = headers["x-github-delivery"]
         const eventName = headers["x-github-event"]
-        const event = yield* decodeWebhookEvent({
-          id: deliveryId,
-          name: eventName,
-          payload,
-        }).pipe(
-          Effect.catchCause(
-            Effect.fnUntraced(function* (cause) {
-              yield* Effect.logDebug(
-                "Ignored GitHub webhook event with unsupported schema",
-                cause,
-              ).pipe(Effect.annotateLogs({ id: deliveryId, event: eventName }))
-              return undefined
-            }),
-          ),
-        )
 
-        // Let GitHub know we received the event even if it did not parse successfully
-        if (event === undefined) {
+        if (!isSupportedEventName(eventName)) {
+          yield* Effect.logDebug("Ignored GitHub webhook with unsupported event name").pipe(
+            Effect.annotateLogs({ id: deliveryId, event: eventName }),
+          )
           return acceptedResponse
         }
 
-        yield* queue.enqueue(event).pipe(
+        const envelope: GitHubWebhookEnvelopeV1 = {
+          schemaVersion: 1,
+          deliveryId,
+          eventName,
+          receivedAt: yield* DateTime.now,
+          payloadSha256: yield* sha256Hex(body),
+          body: { _tag: "Inline", payload: body },
+        }
+
+        const enqueued = yield* queue.enqueue(envelope).pipe(
+          Effect.as(true),
           Effect.catchCause(
             Effect.fnUntraced(function* (cause) {
-              yield* Effect.logDebug("Failed to enqueue event", cause).pipe(
+              yield* Effect.logError("Failed to enqueue GitHub webhook envelope", cause).pipe(
                 Effect.annotateLogs({ id: deliveryId, event: eventName }),
               )
+              return false
             }),
           ),
         )
 
-        return acceptedResponse
+        return enqueued ? acceptedResponse : serviceUnavailableResponse
       }),
     )
   }),
-).pipe(Layer.provide([GitHubEventQueue.layer, GitHubWebhookVerifier]))
+)
+
+export const GitHubWebHookRoutesLayer = GitHubWebhookRoutesLayerNoDeps.pipe(
+  Layer.provide([GitHubEventQueue.layer, GitHubWebhookVerifier]),
+)

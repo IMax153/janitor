@@ -54,4 +54,7 @@ export default defineConfig({
       },
     },
   },
+  test: {
+    exclude: [".direnv"],
+  },
 })

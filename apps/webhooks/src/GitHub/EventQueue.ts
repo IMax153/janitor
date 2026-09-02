@@ -1,4 +1,5 @@
-import { GitHubWebhookEvent } from "@janitor/domain/GitHub/WebhookEvent"
+import type { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
+import { GitHubWebhookEnvelopeV1 } from "@janitor/domain/GitHub/WebhookEnvelope"
 import type { RuntimeContext } from "alchemy/RuntimeContext"
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as Context from "effect/Context"
@@ -8,7 +9,7 @@ import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 
 export class EnqueueError extends Data.TaggedError("EnqueueError")<{
-  readonly event: GitHubWebhookEvent
+  readonly deliveryId: GitHubWebhookDeliveryId
   readonly cause: unknown
 }> {}
 
@@ -16,7 +17,7 @@ export class GitHubEventQueue extends Context.Service<
   GitHubEventQueue,
   {
     readonly enqueue: (
-      event: GitHubWebhookEvent,
+      envelope: GitHubWebhookEnvelopeV1,
     ) => Effect.Effect<void, EnqueueError, RuntimeContext>
   }
 >()("@janitor/webhooks/GitHub/EventQueue/GitHubEventQueue") {}
@@ -25,14 +26,18 @@ const make = Effect.gen(function* () {
   const resource = yield* Cloudflare.Queues.Queue("GitHubEventsQueue")
   const queue = yield* Cloudflare.Queues.WriteQueue(resource)
 
-  const encodeWebhookEvent = Schema.encodeEffect(GitHubWebhookEvent)
+  const encodeEnvelope = Schema.encodeEffect(GitHubWebhookEnvelopeV1)
 
   const enqueue = Effect.fn("GitHubEventQueue.enqueue")(
-    function* (event: GitHubWebhookEvent) {
-      const body = yield* encodeWebhookEvent(event)
+    function* (envelope: GitHubWebhookEnvelopeV1) {
+      const body = yield* encodeEnvelope(envelope)
       return yield* queue.send(body, { contentType: "json" })
     },
-    (effect, event) => Effect.mapError(effect, (cause) => new EnqueueError({ event, cause })),
+    (effect, envelope) =>
+      Effect.mapError(
+        effect,
+        (cause) => new EnqueueError({ deliveryId: envelope.deliveryId, cause }),
+      ),
   )
 
   return {
