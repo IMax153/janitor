@@ -4,10 +4,13 @@ import * as Option from "effect/Option"
 import { TestSchema } from "effect/testing"
 import {
   GitHubInstallationId,
-  GitHubRepository,
   GitHubInstallationIdFromStringOrNumber,
   GitHubRepositoryDatabaseId,
   GitHubRepositoryDatabaseIdFromStringOrNumber,
+  GitHubRepositoryNodeId,
+} from "@janitor/domain/GitHub/Id"
+import {
+  GitHubRepository,
   GitHubRepositoryFullNameFromString,
   GitHubRepositoryId,
 } from "@janitor/domain/GitHub/Repository"
@@ -55,6 +58,7 @@ describe("GitHub repository schemas", () => {
       {
         id: "01234567-89ab-7607-8809-0a0b0c0d0e0f",
         githubDatabaseId: "123",
+        githubNodeId: "R_kgDOJanitor",
         owner: "effect",
         repo: "janitor",
         isPrivate: true,
@@ -68,6 +72,7 @@ describe("GitHub repository schemas", () => {
       GitHubRepository.make({
         id: GitHubRepositoryId.make("01234567-89ab-7607-8809-0a0b0c0d0e0f"),
         githubDatabaseId: GitHubRepositoryDatabaseId.make("123"),
+        githubNodeId: GitHubRepositoryNodeId.make("R_kgDOJanitor"),
         owner: "effect",
         repo: "janitor",
         isPrivate: true,

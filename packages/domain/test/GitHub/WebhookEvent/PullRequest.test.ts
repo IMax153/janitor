@@ -1,7 +1,17 @@
 import { assert, describe, it } from "@effect/vitest"
 import { TestSchema } from "effect/testing"
-import { GitHubInstallationId, GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Repository"
-import { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/WebhookEvent/Base"
+import {
+  GitHubCommitSha,
+  GitHubInstallationId,
+  GitHubLabelDatabaseId,
+  GitHubLabelNodeId,
+  GitHubPullRequestDatabaseId,
+  GitHubPullRequestNodeId,
+  GitHubRepositoryDatabaseId,
+  GitHubRepositoryNodeId,
+  GitHubUserDatabaseId,
+  GitHubWebhookDeliveryId,
+} from "@janitor/domain/GitHub/Id"
 import { GitHubWebhookEvent } from "@janitor/domain/GitHub/WebhookEvent"
 import { PullRequestWebhookPayload } from "@janitor/domain/GitHub/WebhookEvent/PullRequest"
 
@@ -14,12 +24,13 @@ const payload = {
     title: "Fix repository cleanup",
     body: null,
     draft: false,
-    user: { login: "octocat" },
+    user: { id: 102, login: "octocat" },
     head: { sha: "a".repeat(40) },
     base: { ref: "main" },
   },
   repository: {
     id: 456,
+    node_id: "R_kgDOJanitor",
     full_name: "effect/janitor",
   },
   installation: { id: 789 },
@@ -29,22 +40,23 @@ const payload = {
 const openedPayload: PullRequestWebhookPayload = {
   number: 42,
   pullRequest: {
-    id: 123,
+    id: GitHubPullRequestDatabaseId.make("123"),
     number: 42,
-    nodeId: "PR_kwDOExample",
+    nodeId: GitHubPullRequestNodeId.make("PR_kwDOExample"),
     title: "Fix repository cleanup",
     body: null,
     draft: false,
-    user: { login: "octocat" },
-    head: { sha: "a".repeat(40) },
+    user: { id: GitHubUserDatabaseId.make("102"), login: "octocat" },
+    head: { sha: GitHubCommitSha.make("a".repeat(40)) },
     base: { ref: "main" },
   },
   repository: {
     id: GitHubRepositoryDatabaseId.make("456"),
+    nodeId: GitHubRepositoryNodeId.make("R_kgDOJanitor"),
     fullName: { owner: "effect", repo: "janitor" },
   },
   installation: { id: GitHubInstallationId.make("789") },
-  sender: { id: 101, login: "hubot" },
+  sender: { id: GitHubUserDatabaseId.make("101"), login: "hubot" },
   action: "opened",
 }
 
@@ -60,10 +72,37 @@ describe("pull request webhook payload schema", () => {
 
     await encoding.succeed(openedPayload, {
       ...payload,
-      repository: { id: 456, full_name: "effect/janitor" },
+      repository: { id: 456, node_id: "R_kgDOJanitor", full_name: "effect/janitor" },
       installation: { id: 789 },
       action: "opened",
     })
+  })
+
+  it("decodes queued payloads without newly retained stable IDs", async () => {
+    const decoding = new TestSchema.Asserts(PullRequestWebhookPayload).decoding()
+
+    await decoding.succeed(
+      {
+        ...payload,
+        action: "opened",
+        pull_request: {
+          ...payload.pull_request,
+          user: { login: "octocat" },
+        },
+        repository: { id: 456, full_name: "effect/janitor" },
+      },
+      {
+        ...openedPayload,
+        pullRequest: {
+          ...openedPayload.pullRequest,
+          user: { login: "octocat" },
+        },
+        repository: {
+          id: GitHubRepositoryDatabaseId.make("456"),
+          fullName: { owner: "effect", repo: "janitor" },
+        },
+      },
+    )
   })
 
   it("declares every supported action", () => {
@@ -83,10 +122,17 @@ describe("pull request webhook payload schema", () => {
     const decoding = new TestSchema.Asserts(PullRequestWebhookPayload).decoding()
     const before = "b".repeat(40)
     const after = "c".repeat(40)
+    const decodedBefore = GitHubCommitSha.make(before)
+    const decodedAfter = GitHubCommitSha.make(after)
 
     await decoding.succeed(
       { ...payload, action: "synchronize", before, after },
-      { ...openedPayload, action: "synchronize", before, after },
+      {
+        ...openedPayload,
+        action: "synchronize",
+        before: decodedBefore,
+        after: decodedAfter,
+      },
     )
     await decoding.succeed(
       {
@@ -110,15 +156,20 @@ describe("pull request webhook payload schema", () => {
 
   it("decodes labeled and unlabeled action data", async () => {
     const decoding = new TestSchema.Asserts(PullRequestWebhookPayload).decoding()
-    const label = { id: 202, name: "bug" }
+    const label = { id: 202, node_id: "LA_kwDOExample", name: "bug" }
+    const decodedLabel = {
+      id: GitHubLabelDatabaseId.make("202"),
+      nodeId: GitHubLabelNodeId.make("LA_kwDOExample"),
+      name: "bug",
+    }
 
     await decoding.succeed(
       { ...payload, action: "labeled", label },
-      { ...openedPayload, action: "labeled", label },
+      { ...openedPayload, action: "labeled", label: decodedLabel },
     )
     await decoding.succeed(
       { ...payload, action: "unlabeled", label },
-      { ...openedPayload, action: "unlabeled", label },
+      { ...openedPayload, action: "unlabeled", label: decodedLabel },
     )
   })
 

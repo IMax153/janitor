@@ -1,24 +1,28 @@
 import * as Schema from "effect/Schema"
 import {
+  GitHubCommitSha,
   GitHubInstallationIdFromStringOrNumber,
+  GitHubLabelDatabaseIdFromStringOrNumber,
+  GitHubLabelNodeId,
+  GitHubPullRequestDatabaseIdFromStringOrNumber,
+  GitHubPullRequestNodeId,
   GitHubRepositoryDatabaseIdFromStringOrNumber,
-  GitHubRepositoryFullNameFromString,
-} from "../Repository.ts"
+  GitHubRepositoryNodeId,
+  GitHubUserDatabaseIdFromStringOrNumber,
+} from "../Id.ts"
+import { GitHubRepositoryFullNameFromString } from "../Repository.ts"
 import { BaseGitHubWebhookEvent } from "./Base.ts"
 
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0)).annotate({
   identifier: "PositiveInteger",
 })
-const GitCommitSha = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/i)).annotate({
-  identifier: "GitCommitSha",
-})
-
 const PullRequestUser = Schema.Struct({
+  id: Schema.optionalKey(GitHubUserDatabaseIdFromStringOrNumber),
   login: Schema.NonEmptyString,
 }).annotate({ identifier: "PullRequestUser" })
 
 const PullRequestHead = Schema.Struct({
-  sha: GitCommitSha,
+  sha: GitHubCommitSha,
 }).annotate({ identifier: "PullRequestHead" })
 
 const PullRequestBase = Schema.Struct({
@@ -26,9 +30,9 @@ const PullRequestBase = Schema.Struct({
 }).annotate({ identifier: "PullRequestBase" })
 
 export const PullRequest = Schema.Struct({
-  id: PositiveInteger,
+  id: GitHubPullRequestDatabaseIdFromStringOrNumber,
   number: PositiveInteger,
-  nodeId: Schema.NonEmptyString,
+  nodeId: GitHubPullRequestNodeId,
   title: Schema.NonEmptyString,
   body: Schema.Union([Schema.String, Schema.Null]),
   draft: Schema.Boolean,
@@ -42,9 +46,10 @@ export type PullRequest = typeof PullRequest.Type
 
 export const PullRequestRepository = Schema.Struct({
   id: GitHubRepositoryDatabaseIdFromStringOrNumber,
+  nodeId: Schema.optionalKey(GitHubRepositoryNodeId),
   fullName: GitHubRepositoryFullNameFromString,
 })
-  .pipe(Schema.encodeKeys({ fullName: "full_name" }))
+  .pipe(Schema.encodeKeys({ nodeId: "node_id", fullName: "full_name" }))
   .annotate({ identifier: "PullRequestRepository" })
 export type PullRequestRepository = typeof PullRequestRepository.Type
 
@@ -53,14 +58,17 @@ const PullRequestInstallation = Schema.Struct({
 }).annotate({ identifier: "PullRequestInstallation" })
 
 const PullRequestSender = Schema.Struct({
-  id: PositiveInteger,
+  id: GitHubUserDatabaseIdFromStringOrNumber,
   login: Schema.NonEmptyString,
 }).annotate({ identifier: "PullRequestSender" })
 
 const PullRequestLabel = Schema.Struct({
-  id: PositiveInteger,
+  id: GitHubLabelDatabaseIdFromStringOrNumber,
+  nodeId: Schema.optionalKey(GitHubLabelNodeId),
   name: Schema.NonEmptyString,
-}).annotate({ identifier: "PullRequestLabel" })
+})
+  .pipe(Schema.encodeKeys({ nodeId: "node_id" }))
+  .annotate({ identifier: "PullRequestLabel" })
 
 const PullRequestStringChange = Schema.Struct({
   from: Schema.String,
@@ -114,8 +122,8 @@ export type PullRequestReopened = typeof PullRequestReopened.Type
 export const PullRequestSynchronized = BasePullRequestPayloadStruct.pipe(
   Schema.fieldsAssign({
     action: Schema.Literal("synchronize"),
-    before: GitCommitSha,
-    after: GitCommitSha,
+    before: GitHubCommitSha,
+    after: GitHubCommitSha,
   }),
 )
   .pipe(Schema.encodeKeys({ pullRequest: "pull_request" }))

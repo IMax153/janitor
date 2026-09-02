@@ -6,12 +6,16 @@ import {
   GitHubAccountDatabaseId,
   GitHubAccountDatabaseIdFromNumber,
   GitHubAccountDatabaseIdFromStringOrNumber,
+  GitHubInstallationId,
+  GitHubRepositoryDatabaseId,
+  GitHubRepositoryNodeId,
+} from "@janitor/domain/GitHub/Id"
+import {
   GitHubInstallationRepositoriesResponse,
   GitHubInstallationRepository,
   GitHubInstallationSummary,
   GitHubInstallation,
 } from "@janitor/domain/GitHub/Installation"
-import { GitHubInstallationId, GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Repository"
 
 describe("GitHub installation schemas", () => {
   it("normalizes string and number account database IDs", async () => {
@@ -82,18 +86,31 @@ describe("GitHub installation schemas", () => {
     const asserts = new TestSchema.Asserts(GitHubInstallationRepository)
     const repository = {
       id: GitHubRepositoryDatabaseId.make("789"),
+      nodeId: GitHubRepositoryNodeId.make("R_kgDOJanitor"),
       fullName: { owner: "effect", repo: "janitor" },
       isPrivate: true,
     }
 
     await asserts
       .decoding()
-      .succeed({ id: 789, full_name: "effect/janitor", private: true }, repository)
+      .succeed(
+        { id: 789, node_id: "R_kgDOJanitor", full_name: "effect/janitor", private: true },
+        repository,
+      )
     await asserts.encoding().succeed(repository, {
       id: 789,
+      node_id: "R_kgDOJanitor",
       full_name: "effect/janitor",
       private: true,
     })
+    await asserts.decoding().succeed(
+      { id: 789, full_name: "effect/janitor", private: true },
+      {
+        id: GitHubRepositoryDatabaseId.make("789"),
+        fullName: { owner: "effect", repo: "janitor" },
+        isPrivate: true,
+      },
+    )
   })
 
   it("decodes the installation repositories response", async () => {
@@ -104,7 +121,14 @@ describe("GitHub installation schemas", () => {
       {
         total_count: 1,
         repository_selection: "selected",
-        repositories: [{ id: 789, full_name: "effect/janitor", private: false }],
+        repositories: [
+          {
+            id: 789,
+            node_id: "R_kgDOJanitor",
+            full_name: "effect/janitor",
+            private: false,
+          },
+        ],
       },
       {
         totalCount: 1,
@@ -112,6 +136,7 @@ describe("GitHub installation schemas", () => {
         repositories: [
           {
             id: GitHubRepositoryDatabaseId.make("789"),
+            nodeId: GitHubRepositoryNodeId.make("R_kgDOJanitor"),
             fullName: { owner: "effect", repo: "janitor" },
             isPrivate: false,
           },
