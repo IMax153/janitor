@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import type { GitHubWebhookEnvelopeV1 } from "@janitor/domain/GitHub/WebhookEnvelope"
 import { EnqueueError, GitHubEventQueue } from "@janitor/webhooks/GitHub/EventQueue"
-import { GitHubWebhookRoutesLayer } from "@janitor/webhooks/GitHub/Http"
+import { GitHubWebhookRoutesLayerNoDeps } from "@janitor/webhooks/GitHub/Http"
 import { WebhookVerifier } from "@janitor/webhooks/WebhookVerifier"
 
 const runtimeContext = RuntimeContext.RuntimeContext.of({
@@ -30,7 +30,7 @@ const makeHandler = (
   Effect.acquireRelease(
     Effect.sync(() =>
       HttpRouter.toWebHandler(
-        GitHubWebhookRoutesLayer.pipe(
+        GitHubWebhookRoutesLayerNoDeps.pipe(
           Layer.provide([VerifierStub, Layer.succeed(GitHubEventQueue, { enqueue })]),
         ),
         {
@@ -202,6 +202,66 @@ describe("GitHubWebhookRoutes", () => {
       })
 
       assert.strictEqual(response.status, 413)
+      assert.strictEqual(calls, 0)
+    }),
+  )
+
+  it.effect("rejects an oversized body by actual bytes when Content-Length is absent", () =>
+    Effect.gen(function* () {
+      let calls = 0
+      const handler = yield* makeHandler(() => Effect.sync(() => void calls++))
+      const body = new Uint8Array(1024 * 1024 + 1).fill(0x20)
+
+      const response = yield* post(handler, { headers: headers(), body })
+
+      assert.strictEqual(response.status, 413)
+      assert.strictEqual(calls, 0)
+    }),
+  )
+
+  it.effect("rejects an oversized body by actual bytes when Content-Length lies", () =>
+    Effect.gen(function* () {
+      let calls = 0
+      const handler = yield* makeHandler(() => Effect.sync(() => void calls++))
+      const body = new Uint8Array(1024 * 1024 + 1).fill(0x20)
+
+      const response = yield* post(handler, {
+        headers: headers({ "content-length": "2" }),
+        body,
+      })
+
+      assert.strictEqual(response.status, 413)
+      assert.strictEqual(calls, 0)
+    }),
+  )
+
+  it.effect("accepts a body exactly at the limit", () =>
+    Effect.gen(function* () {
+      const envelopes: Array<GitHubWebhookEnvelopeV1> = []
+      const handler = yield* makeHandler((envelope) =>
+        Effect.sync(() => void envelopes.push(envelope)),
+      )
+      const padding = " ".repeat(1024 * 1024 - 2)
+      const body = new TextEncoder().encode(`{${padding}}`)
+
+      const response = yield* post(handler, { headers: headers(), body })
+
+      assert.strictEqual(response.status, 202)
+      const envelope = envelopes[0]
+      assert.isDefined(envelope)
+      if (envelope === undefined || envelope.body._tag !== "Inline") return
+      assert.strictEqual(envelope.body.payload.byteLength, 1024 * 1024)
+    }),
+  )
+
+  it.effect("rejects an empty body with 400", () =>
+    Effect.gen(function* () {
+      let calls = 0
+      const handler = yield* makeHandler(() => Effect.sync(() => void calls++))
+
+      const response = yield* post(handler, { headers: headers() })
+
+      assert.strictEqual(response.status, 400)
       assert.strictEqual(calls, 0)
     }),
   )

@@ -5,14 +5,16 @@ import {
   GitHubWebhookPayloadSha256,
 } from "@janitor/domain/GitHub/WebhookEnvelope"
 import * as Config from "effect/Config"
+import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
+import * as Stream from "effect/Stream"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import * as HttpServerError from "effect/unstable/http/HttpServerError"
-import { constFalse, constUndefined } from "effect/Function"
+import { constFalse } from "effect/Function"
 import * as WebhookVerifier from "../WebhookVerifier.ts"
 import * as GitHubEventQueue from "./EventQueue.ts"
 import { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
@@ -22,7 +24,7 @@ import * as DateTime from "effect/DateTime"
 export const MAX_GITHUB_WEBHOOK_BODY_BYTES = 1024 * 1024
 
 const GitHubHeaders = Schema.Struct({
-  "content-length": Schema.optional(Schema.NumberFromString.check(Schema.isInt())),
+  "content-length": Schema.optional(Schema.FiniteFromString.check(Schema.isInt())),
   "x-hub-signature-256": Schema.NonEmptyString,
   "x-github-delivery": GitHubWebhookDeliveryId,
   "x-github-event": GitHubWebhookName,
@@ -42,6 +44,10 @@ const serviceUnavailableResponse = HttpServerResponse.text("Service Unavailable"
   headers: { "Retry-After": "60" },
 })
 
+export class BodyTooLargeError extends Data.TaggedError("BodyTooLargeError")<{
+  readonly maxBytes: number
+}> {}
+
 const GitHubWebhookVerifier = WebhookVerifier.layer({
   secret: Config.Redacted("GITHUB_WEBHOOK_SECRET"),
 })
@@ -51,11 +57,45 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
     const queue = yield* GitHubEventQueue.GitHubEventQueue
     const verifier = yield* WebhookVerifier.WebhookVerifier
 
+    const parseJson = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString)
     const isSupportedEventName = Schema.is(GitHubWebhookEventName)
 
     const sha256Hex = Effect.fnUntraced(function* (body: Uint8Array<ArrayBuffer>) {
       const digest = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", body))
       return GitHubWebhookPayloadSha256.make(Encoding.encodeHex(new Uint8Array(digest)))
+    })
+
+    const readBodyBounded = Effect.fnUntraced(function* (
+      request: HttpServerRequest.HttpServerRequest,
+    ) {
+      const chunks: Array<Uint8Array> = []
+
+      let total = 0
+      yield* request.stream.pipe(
+        Stream.runForEach(
+          Effect.fnUntraced(function* (chunk) {
+            total += chunk.byteLength
+
+            if (total > MAX_GITHUB_WEBHOOK_BODY_BYTES) {
+              return yield* new BodyTooLargeError({
+                maxBytes: MAX_GITHUB_WEBHOOK_BODY_BYTES,
+              })
+            }
+
+            chunks.push(chunk)
+          }),
+        ),
+      )
+
+      const body = new Uint8Array(total)
+
+      let offset = 0
+      for (const chunk of chunks) {
+        body.set(chunk, offset)
+        offset += chunk.byteLength
+      }
+
+      return body
     })
 
     return HttpRouter.add(
@@ -82,9 +122,18 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
           return payloadTooLargeResponse
         }
 
-        const body = yield* request.arrayBuffer.pipe(
-          Effect.map((buffer) => new Uint8Array(buffer)),
-          Effect.orElseSucceed(constUndefined),
+        const body = yield* readBodyBounded(request).pipe(
+          Effect.catchTags({
+            BodyTooLargeError: () => Effect.undefined,
+            HttpServerError: (cause) =>
+              Effect.fail(
+                new HttpServerError.RequestParseError({
+                  cause,
+                  request,
+                  description: "Unable to read webhook body",
+                }),
+              ),
+          }),
         )
 
         if (body === undefined) {
@@ -97,7 +146,7 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
           return invalidWebhookSignatureResponse
         }
 
-        const isJson = yield* Effect.try(() => JSON.parse(new TextDecoder().decode(body))).pipe(
+        const isJson = yield* parseJson(new TextDecoder().decode(body)).pipe(
           Effect.as(true),
           Effect.orElseSucceed(constFalse),
         )
