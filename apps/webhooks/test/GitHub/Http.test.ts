@@ -5,9 +5,10 @@ import * as Effect from "effect/Effect"
 import * as Encoding from "effect/Encoding"
 import * as Layer from "effect/Layer"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
-import type {
-  GitHubWebhookEnvelopeV1,
-  GitHubWebhookR2ObjectKey,
+import {
+  GitHubWebhookEncryptionKeyId,
+  type GitHubWebhookEnvelopeV1,
+  type GitHubWebhookR2ObjectKey,
 } from "@janitor/domain/GitHub/WebhookEnvelope"
 import { EnqueueError, GitHubEventQueue } from "@janitor/webhooks/GitHub/EventQueue"
 import { GitHubWebhookRoutesLayerNoDeps } from "@janitor/webhooks/GitHub/Http"
@@ -17,6 +18,7 @@ import {
   payloadKey,
   type PutPayloadInput,
 } from "@janitor/webhooks/GitHub/PayloadStore"
+import * as PayloadCipher from "@janitor/webhooks/PayloadCipher"
 import { WebhookVerifier } from "@janitor/webhooks/WebhookVerifier"
 import { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
 
@@ -35,6 +37,21 @@ const VerifierStub = Layer.succeed(WebhookVerifier, {
   verify: (signature) => Effect.succeed(signature === validSignature),
 })
 
+const cipherKeyId = GitHubWebhookEncryptionKeyId.make("test-key")
+const cipherKey = new Uint8Array(32).map((_, index) => index)
+const CipherLayer = Layer.effect(
+  PayloadCipher.PayloadCipher,
+  PayloadCipher.make({ key: cipherKey, keyId: cipherKeyId }),
+)
+
+// AES-GCM appends a 16 byte authentication tag to every ciphertext.
+const AES_GCM_TAG_BYTES = 16
+
+const decrypt = (envelope: GitHubWebhookEnvelopeV1, ciphertext: Uint8Array) =>
+  Effect.flatMap(PayloadCipher.make({ key: cipherKey, keyId: cipherKeyId }), (cipher) =>
+    cipher.decrypt(envelope.deliveryId, envelope.encryption, ciphertext),
+  )
+
 interface StoreStub {
   readonly put?: (
     input: PutPayloadInput,
@@ -52,6 +69,7 @@ const makeHandler = (
         GitHubWebhookRoutesLayerNoDeps.pipe(
           Layer.provide([
             VerifierStub,
+            CipherLayer,
             Layer.succeed(GitHubEventQueue, { enqueue }),
             Layer.succeed(GitHubPayloadStore, {
               put: store.put ?? ((input) => Effect.succeed(payloadKey(input.deliveryId))),
@@ -118,8 +136,12 @@ describe("GitHubWebhookRoutes", () => {
       assert.strictEqual(envelope.deliveryId, "delivery-1")
       assert.strictEqual(envelope.eventName, "pull_request")
       assert.strictEqual(envelope.payloadSha256, yield* sha256(body))
+      assert.strictEqual(envelope.encryption.algorithm, "AES-256-GCM")
+      assert.strictEqual(envelope.encryption.keyId, cipherKeyId)
       assert.strictEqual(envelope.body._tag, "Inline")
-      assert.deepStrictEqual(envelope.body.payload, body)
+      if (envelope.body._tag !== "Inline") return
+      assert.notDeepEqual(envelope.body.payload, body)
+      assert.deepStrictEqual(yield* decrypt(envelope, envelope.body.payload), body)
       const receivedAt = DateTime.toEpochMillis(envelope.receivedAt)
       assert.isTrue(receivedAt >= before && receivedAt <= after)
     }),
@@ -283,7 +305,7 @@ describe("GitHubWebhookRoutes", () => {
       const response = yield* post(handler, { headers: headers(), body })
 
       assert.strictEqual(response.status, 202)
-      assert.strictEqual(inputs[0]?.body.byteLength, 1024 * 1024)
+      assert.strictEqual(inputs[0]?.body.byteLength, 1024 * 1024 + AES_GCM_TAG_BYTES)
       assert.deepStrictEqual(envelopes[0]?.body, { _tag: "R2", key: deliveryOneKey })
     }),
   )
@@ -302,7 +324,7 @@ describe("GitHubWebhookRoutes", () => {
             }),
         },
       )
-      const body = paddedJson(64 * 1024)
+      const body = paddedJson(64 * 1024 - AES_GCM_TAG_BYTES)
 
       const response = yield* post(handler, { headers: headers(), body })
 
@@ -332,15 +354,22 @@ describe("GitHubWebhookRoutes", () => {
             }),
         },
       )
-      const body = paddedJson(64 * 1024 + 1)
+      const body = paddedJson(64 * 1024 - AES_GCM_TAG_BYTES + 1)
 
       const response = yield* post(handler, { headers: headers(), body })
 
       assert.strictEqual(response.status, 202)
       assert.deepStrictEqual(order, ["put", "enqueue"])
-      assert.deepStrictEqual(inputs[0]?.body, body)
-      assert.strictEqual(inputs[0]?.sha256, yield* sha256(body))
-      assert.deepStrictEqual(envelopes[0]?.body, { _tag: "R2", key: deliveryOneKey })
+      const stored = inputs[0]
+      const envelope = envelopes[0]
+      assert.isDefined(stored)
+      assert.isDefined(envelope)
+      if (stored === undefined || envelope === undefined) return
+      assert.notDeepEqual(stored.body, body)
+      assert.deepStrictEqual(yield* decrypt(envelope, stored.body), body)
+      assert.strictEqual(stored.sha256, yield* sha256(stored.body))
+      assert.strictEqual(envelope.payloadSha256, yield* sha256(body))
+      assert.deepStrictEqual(envelope.body, { _tag: "R2", key: deliveryOneKey })
     }),
   )
 

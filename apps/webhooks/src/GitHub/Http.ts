@@ -16,6 +16,7 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import * as HttpServerError from "effect/unstable/http/HttpServerError"
 import { constFalse } from "effect/Function"
+import * as PayloadCipher from "../PayloadCipher.ts"
 import * as WebhookVerifier from "../WebhookVerifier.ts"
 import * as GitHubEventQueue from "./EventQueue.ts"
 import * as GitHubPayloadStore from "./PayloadStore.ts"
@@ -57,10 +58,18 @@ const GitHubWebhookVerifier = WebhookVerifier.layer({
   secret: Config.Redacted("GITHUB_WEBHOOK_SECRET"),
 })
 
+const GitHubPayloadCipher = PayloadCipher.layer(
+  PayloadCipher.config({
+    key: "GITHUB_WEBHOOK_PAYLOAD_KEY",
+    keyId: "GITHUB_WEBHOOK_PAYLOAD_KEY_ID",
+  }),
+)
+
 export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
   Effect.gen(function* () {
     const queue = yield* GitHubEventQueue.GitHubEventQueue
     const store = yield* GitHubPayloadStore.GitHubPayloadStore
+    const cipher = yield* PayloadCipher.PayloadCipher
     const verifier = yield* WebhookVerifier.WebhookVerifier
 
     const parseJson = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString)
@@ -176,10 +185,29 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
 
         const payloadSha256 = yield* sha256Hex(body)
 
+        const encrypted = yield* cipher.encrypt(deliveryId, body).pipe(
+          Effect.catchCause(
+            Effect.fnUntraced(function* (cause) {
+              yield* Effect.logError("Failed to encrypt GitHub webhook payload", cause).pipe(
+                Effect.annotateLogs({ id: deliveryId, event: eventName }),
+              )
+              return undefined
+            }),
+          ),
+        )
+
+        if (encrypted === undefined) {
+          return serviceUnavailableResponse
+        }
+
+        const { ciphertext, encryption } = encrypted
+
         const envelopeBody: GitHubWebhookBodyV1 | undefined =
-          body.byteLength <= MAX_INLINE_WEBHOOK_BODY_BYTES
-            ? GitHubWebhookBodyV1.cases.Inline.make({ payload: body })
-            : yield* store.put({ deliveryId, body, sha256: payloadSha256 }).pipe(
+          ciphertext.byteLength <= MAX_INLINE_WEBHOOK_BODY_BYTES
+            ? GitHubWebhookBodyV1.cases.Inline.make({ payload: ciphertext })
+            : yield* Effect.flatMap(sha256Hex(ciphertext), (sha256) =>
+                store.put({ deliveryId, body: ciphertext, sha256 }),
+              ).pipe(
                 Effect.map((key) => GitHubWebhookBodyV1.cases.R2.make({ key })),
                 Effect.catchCause(
                   Effect.fnUntraced(function* (cause) {
@@ -201,6 +229,7 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
           eventName,
           receivedAt: yield* DateTime.now,
           payloadSha256,
+          encryption,
           body: envelopeBody,
         }
 
@@ -236,5 +265,10 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
 )
 
 export const GitHubWebHookRoutesLayer = GitHubWebhookRoutesLayerNoDeps.pipe(
-  Layer.provide([GitHubEventQueue.layer, GitHubPayloadStore.layer, GitHubWebhookVerifier]),
+  Layer.provide([
+    GitHubEventQueue.layer,
+    GitHubPayloadStore.layer,
+    GitHubPayloadCipher,
+    GitHubWebhookVerifier,
+  ]),
 )
