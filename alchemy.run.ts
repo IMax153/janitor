@@ -8,7 +8,6 @@ import * as Layer from "effect/Layer"
 
 import { TopologyProbeDatabase } from "@janitor/cluster/Database"
 import ClusterWorker from "@janitor/cluster/Worker"
-import WebhookWorker from "@janitor/webhooks/Worker"
 
 const DockerProviders = Layer.effect(
   Docker.Providers,
@@ -29,7 +28,6 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     const database = yield* TopologyProbeDatabase
     const cluster = yield* ClusterWorker
-    const webhook = yield* WebhookWorker
 
     const website = yield* Cloudflare.Website.Foldkit("Website", {
       rootDir: "apps/web",
@@ -38,7 +36,6 @@ export default Alchemy.Stack(
     return {
       databaseId: database.databaseId,
       clusterUrl: cluster.url,
-      webhooksUrl: webhook.url,
       websiteUrl: website.url,
     }
   }),

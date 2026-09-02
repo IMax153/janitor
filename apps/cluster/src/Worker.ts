@@ -5,8 +5,14 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
+import * as Path from "effect/Path"
+import * as Etag from "effect/unstable/http/Etag"
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient"
+import * as HttpPlatform from "effect/unstable/http/HttpPlatform"
+import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import { GitHubEventsDeadLetterQueue, GitHubEventsQueue } from "@janitor/webhooks/GitHub/EventQueue"
 import { GitHubWebhookPayloadsBucket } from "@janitor/webhooks/GitHub/PayloadStore"
+import { RoutesLayer as WebhookRoutesLayer } from "@janitor/webhooks/Http"
 import * as PayloadCipher from "@janitor/webhooks/PayloadCipher"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
@@ -16,6 +22,24 @@ import {
   GitHubPayloadReader,
   handleMessage,
 } from "./GitHub/WebhookConsumer.ts"
+import * as GitHubAppAuth from "./GitHub/AppAuth.ts"
+import { GitHubBudget } from "./GitHub/RateBudget.ts"
+import { GitHubHttpCache } from "./GitHub/HttpCache.ts"
+import { GitHubReadModel } from "./GitHub/ReadModel.ts"
+import { GitHubTransport } from "./GitHub/Transport.ts"
+import {
+  SyncInstallationInventoryLayer,
+  SyncInstallationInventoryRegistration,
+} from "./GitHub/SyncInstallationInventory.ts"
+import { RefreshEntityLayer, RefreshEntityRegistration } from "./GitHub/RefreshEntity.ts"
+import {
+  SyncRepositoryTrackLayer,
+  SyncRepositoryTrackRegistration,
+} from "./GitHub/SyncRepositoryTrack.ts"
+import { ContentPurge } from "./ContentPurge.ts"
+import { SyncPlanner } from "./SyncPlanner.ts"
+import { SyncRepairCronLayer, SyncRepairCronName } from "./SyncRepairCron.ts"
+import { SyncTargets } from "./SyncTargets.ts"
 import { GitHubWebhookJournal } from "./GitHub/WebhookJournal.ts"
 import {
   ProjectGitHubWebhookLayer,
@@ -60,17 +84,47 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       }),
     )
 
+    const GitHubTransportLayer = GitHubTransport.layer.pipe(
+      Layer.provideMerge(
+        GitHubAppAuth.layer(
+          GitHubAppAuth.config({
+            appId: "GITHUB_APP_ID",
+            privateKey: "GITHUB_APP_PRIVATE_KEY",
+          }),
+        ),
+      ),
+      Layer.provideMerge(GitHubBudget.layer),
+      Layer.provide(FetchHttpClient.layer),
+    )
+
     const ClusterLayer = Layer.mergeAll(
       TopologyProbeLayer,
       TopologyProbeCronLayer,
       ProjectGitHubWebhookLayer,
+      SyncInstallationInventoryLayer,
+      SyncRepositoryTrackLayer,
+      RefreshEntityLayer,
       WorkflowOutboxCronLayer,
+      SyncRepairCronLayer,
     ).pipe(
-      Layer.provideMerge(WorkflowDispatcher.layer([ProjectGitHubWebhookRegistration])),
+      Layer.provideMerge(SyncPlanner.layer),
+      Layer.provideMerge(
+        WorkflowDispatcher.layer([
+          ProjectGitHubWebhookRegistration,
+          SyncInstallationInventoryRegistration,
+          SyncRepositoryTrackRegistration,
+          RefreshEntityRegistration,
+        ]),
+      ),
+      Layer.provideMerge(GitHubTransportLayer),
       Layer.provideMerge(
         Layer.mergeAll(
           TopologyProbeStore.layer,
           GitHubWebhookJournal.layer,
+          GitHubReadModel.layer,
+          SyncTargets.layer,
+          ContentPurge.layer,
+          GitHubHttpCache.layer.pipe(Layer.provide(GitHubPayloadCipherLayer)),
           GitHubPayloadReader.fromBucket(githubPayloadsBucket),
           GitHubEventsDeadLetter.fromQueue(githubDeadLetterQueue),
           GitHubPayloadCipherLayer,
@@ -88,8 +142,9 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
 
     const wakeTopologyProbe = cluster.wake(TopologyProbeCronName)
     const wakeOutboxDispatch = cluster.wake(WorkflowOutboxCronName)
+    const wakeSyncRepair = cluster.wake(SyncRepairCronName)
     yield* Cloudflare.Workers.cron("* * * * *", () =>
-      Effect.all([wakeTopologyProbe(), wakeOutboxDispatch()], { discard: true }),
+      Effect.all([wakeTopologyProbe(), wakeOutboxDispatch(), wakeSyncRepair()], { discard: true }),
     )
 
     yield* Cloudflare.Queues.consumeQueueMessages(
@@ -128,7 +183,26 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       ),
     )
 
-    const handler = Effect.gen(function* () {
+    // Signed webhook ingress lives in the same deployment as the consumer and
+    // workflows, so there is no internal hop between acceptance and journaling.
+    const HttpPlatformStubLayer = Layer.succeed(HttpPlatform.HttpPlatform, {
+      platform: "web",
+      compression: {
+        algorithms: new Set<HttpPlatform.CompressionAlgorithm>(),
+        compressResponse: () =>
+          Effect.die("HttpPlatform.compression.compressResponse not supported"),
+      },
+      fileResponse: () => Effect.die("HttpPlatform.fileResponse not supported"),
+      fileWebResponse: () => Effect.die("HttpPlatform.fileWebResponse not supported"),
+    })
+    const webhookRoutes = yield* HttpRouter.toHttpEffect(
+      WebhookRoutesLayer.pipe(Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer])),
+    )
+    const webhooks = Effect.orElseSucceed(webhookRoutes, () =>
+      HttpServerResponse.empty({ status: 500 }),
+    )
+
+    const probes = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest
       const url = new URL(request.originalUrl)
 
@@ -203,6 +277,12 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       ),
     )
 
+    const handler = Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest
+      const url = new URL(request.originalUrl)
+      return url.pathname.startsWith("/api/v1/") ? yield* webhooks : yield* probes
+    })
+
     return {
       fetch: cluster.provide(handler),
     }
@@ -212,6 +292,8 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       Cloudflare.Queues.WriteQueueBinding,
       Cloudflare.Queues.EventSourceLive,
       Cloudflare.R2.ReadWriteBucketBinding,
+      Cloudflare.R2.WriteBucketBinding,
+      Cloudflare.Workers.RateLimitBinding,
       Cloudflare.Workers.CronEventSourceLive,
     ]),
   ),

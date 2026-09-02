@@ -6,6 +6,8 @@ import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine"
 import { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
+import { SyncGeneration } from "@janitor/domain/GitHub/Sync"
+import { GitHubWebhookJournalSequence } from "@janitor/domain/GitHub/WebhookJournal"
 import {
   GitHubWebhookEncryptionKeyId,
   GitHubWebhookName,
@@ -13,6 +15,9 @@ import {
 import type { GitHubWebhookProjectionStatus } from "@janitor/domain/GitHub/WebhookJournal"
 import * as PayloadCipher from "@janitor/webhooks/PayloadCipher"
 import { ProjectGitHubWebhook, ProjectGitHubWebhookLayer } from "../../src/GitHub/ProjectWebhook.ts"
+import { GitHubReadModel } from "../../src/GitHub/ReadModel.ts"
+import { ContentPurge } from "../../src/ContentPurge.ts"
+import { SyncTargets } from "../../src/SyncTargets.ts"
 import {
   GitHubWebhookJournal,
   type GitHubWebhookJournaledDelivery,
@@ -45,6 +50,7 @@ const journaled = (
     )
     const delivery: GitHubWebhookJournaledDelivery = {
       deliveryId,
+      sequence: GitHubWebhookJournalSequence.make("7"),
       eventName: GitHubWebhookName.make(eventName),
       encryption,
       payload: ciphertext,
@@ -71,6 +77,39 @@ const runWorkflow = (
         ),
         Layer.provide(
           Layer.effect(PayloadCipher.PayloadCipher, PayloadCipher.make({ key, keyId })),
+        ),
+        Layer.provide(
+          Layer.succeed(GitHubReadModel, {
+            withTransaction: (effect) => effect,
+            applyInstallation: () => Effect.void,
+            applyRepositories: () => Effect.void,
+            markRepositoriesLost: () => Effect.void,
+            markRepositoriesSuspect: () => Effect.void,
+            applyPullRequest: () => Effect.succeed({ _tag: "Applied" as const }),
+            applyLabelCatalog: () => Effect.void,
+            applyIssue: () => Effect.succeed({ _tag: "Applied" as const }),
+            applyPullRequestDetails: () => Effect.void,
+            getInstallation: () => Effect.succeedNone,
+            getRepository: () => Effect.succeedNone,
+            getEntity: () => Effect.succeedNone,
+            listLabels: () => Effect.succeed([]),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(SyncTargets, {
+            invalidate: () =>
+              Effect.succeed({ generation: SyncGeneration.make("1"), dispatched: true }),
+            begin: () => Effect.succeed({ _tag: "Superseded" as const }),
+            complete: () => Effect.succeed(false),
+            get: () => Effect.succeedNone,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(ContentPurge, {
+            schedule: () => Effect.void,
+            cancel: () => Effect.void,
+            runDue: () => Effect.succeed({ purged: 0 }),
+          }),
         ),
         Layer.provideMerge(WorkflowEngine.layerMemory),
       ),

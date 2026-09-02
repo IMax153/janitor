@@ -1,4 +1,4 @@
-import type { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
+import type { GitHubInstallationId, GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
 import {
   GitHubWebhookEncryptionV1,
   GitHubWebhookName,
@@ -47,6 +47,7 @@ const Uint8ArrayFromBytea = Schema.instanceOf(Uint8Array)
 
 export const GitHubWebhookJournaledDelivery = Schema.Struct({
   deliveryId: Schema.String,
+  sequence: GitHubWebhookJournalSequence,
   eventName: GitHubWebhookName,
   encryption: Schema.Struct({
     algorithm: GitHubWebhookEncryptionV1.fields.algorithm,
@@ -71,10 +72,12 @@ export class GitHubWebhookJournal extends Context.Service<
     readonly load: (
       deliveryId: GitHubWebhookDeliveryId,
     ) => Effect.Effect<Option.Option<GitHubWebhookJournaledDelivery>, GitHubWebhookJournalError>
+    /** Records the outcome and, when known, the installation the delivery belongs to for retention. */
     readonly markProjection: (
       deliveryId: GitHubWebhookDeliveryId,
       status: Exclude<GitHubWebhookProjectionStatus, "pending">,
       error: Option.Option<string>,
+      installationId?: Option.Option<GitHubInstallationId>,
     ) => Effect.Effect<void, GitHubWebhookJournalError>
   }
 >()("@janitor/cluster/GitHub/WebhookJournal/GitHubWebhookJournal", {
@@ -155,6 +158,7 @@ export class GitHubWebhookJournal extends Context.Service<
 
     const DeliveryRow = Schema.Struct({
       delivery_id: Schema.String,
+      sequence: GitHubWebhookJournalSequenceFromStringOrNumber,
       event_name: GitHubWebhookName,
       encryption_algorithm: GitHubWebhookEncryptionV1.fields.algorithm,
       encryption_key_id: GitHubWebhookEncryptionV1.fields.keyId,
@@ -168,7 +172,7 @@ export class GitHubWebhookJournal extends Context.Service<
       deliveryId: GitHubWebhookDeliveryId,
     ) {
       const rows = yield* sql`
-        SELECT delivery_id, event_name, encryption_algorithm, encryption_key_id,
+        SELECT delivery_id, sequence, event_name, encryption_algorithm, encryption_key_id,
                encryption_iv, payload, projection_status
         FROM github_webhook_delivery
         WHERE delivery_id = ${deliveryId}
@@ -190,6 +194,7 @@ export class GitHubWebhookJournal extends Context.Service<
       }
       return Option.some({
         deliveryId: row.delivery_id,
+        sequence: row.sequence,
         eventName: row.event_name,
         encryption: {
           algorithm: row.encryption_algorithm,
@@ -205,11 +210,13 @@ export class GitHubWebhookJournal extends Context.Service<
       deliveryId: GitHubWebhookDeliveryId,
       status: Exclude<GitHubWebhookProjectionStatus, "pending">,
       error: Option.Option<string>,
+      installationId: Option.Option<GitHubInstallationId> = Option.none(),
     ) {
       yield* sql`
         UPDATE github_webhook_delivery
         SET projection_status = ${status},
             projection_error = ${Option.getOrNull(error)},
+            installation_id = COALESCE(${Option.getOrNull(installationId)}, installation_id),
             projected_at = CLOCK_TIMESTAMP()
         WHERE delivery_id = ${deliveryId}
       `.pipe(
