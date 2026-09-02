@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
 import { GitHubEventsDeadLetterQueue, GitHubEventsQueue } from "@janitor/webhooks/GitHub/EventQueue"
 import { GitHubWebhookPayloadsBucket } from "@janitor/webhooks/GitHub/PayloadStore"
+import * as PayloadCipher from "@janitor/webhooks/PayloadCipher"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { TopologyProbeHyperdrive } from "./Database.ts"
@@ -16,6 +17,13 @@ import {
   handleMessage,
 } from "./GitHub/WebhookConsumer.ts"
 import { GitHubWebhookJournal } from "./GitHub/WebhookJournal.ts"
+import {
+  ProjectGitHubWebhookLayer,
+  ProjectGitHubWebhookRegistration,
+} from "./GitHub/ProjectWebhook.ts"
+import { WorkflowDispatcher } from "./WorkflowDispatcher.ts"
+import { WorkflowOutbox } from "./WorkflowOutbox.ts"
+import { WorkflowOutboxCronLayer, WorkflowOutboxCronName } from "./WorkflowOutboxCron.ts"
 import { MigrationProbe } from "./MigrationProbe.ts"
 import { TopologyProbe, TopologyProbePayload, TopologyProbeLayer } from "./TopologyProbe.ts"
 import { TopologyProbeCronLayer, TopologyProbeCronName } from "./TopologyProbeCron.ts"
@@ -45,15 +53,30 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       url: hyperdrive.connectionString,
     })
 
-    const ClusterLayer = Layer.mergeAll(TopologyProbeLayer, TopologyProbeCronLayer).pipe(
+    const GitHubPayloadCipherLayer = PayloadCipher.layer(
+      PayloadCipher.config({
+        key: "GITHUB_WEBHOOK_PAYLOAD_KEY",
+        keyId: "GITHUB_WEBHOOK_PAYLOAD_KEY_ID",
+      }),
+    )
+
+    const ClusterLayer = Layer.mergeAll(
+      TopologyProbeLayer,
+      TopologyProbeCronLayer,
+      ProjectGitHubWebhookLayer,
+      WorkflowOutboxCronLayer,
+    ).pipe(
+      Layer.provideMerge(WorkflowDispatcher.layer([ProjectGitHubWebhookRegistration])),
       Layer.provideMerge(
         Layer.mergeAll(
           TopologyProbeStore.layer,
           GitHubWebhookJournal.layer,
           GitHubPayloadReader.fromBucket(githubPayloadsBucket),
           GitHubEventsDeadLetter.fromQueue(githubDeadLetterQueue),
+          GitHubPayloadCipherLayer,
         ),
       ),
+      Layer.provideMerge(WorkflowOutbox.layer),
       Layer.provide(DatabaseLayer),
     )
 
@@ -63,7 +86,11 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
     })
     const migrationProbe = yield* MigrationProbe
 
-    yield* Cloudflare.Workers.cron("* * * * *", cluster.wake(TopologyProbeCronName))
+    const wakeTopologyProbe = cluster.wake(TopologyProbeCronName)
+    const wakeOutboxDispatch = cluster.wake(WorkflowOutboxCronName)
+    yield* Cloudflare.Workers.cron("* * * * *", () =>
+      Effect.all([wakeTopologyProbe(), wakeOutboxDispatch()], { discard: true }),
+    )
 
     yield* Cloudflare.Queues.consumeQueueMessages(
       githubEventsQueue,

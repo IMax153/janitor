@@ -28,9 +28,16 @@ export const GitHubWebhookJournalSequenceFromStringOrNumber = Schema.Union([
   GitHubWebhookJournalSequence,
 ]).annotate({ identifier: "GitHubWebhookJournalSequenceFromStringOrNumber" })
 
+/**
+ * `unsupported` records a signature-valid delivery whose payload does not
+ * decode against the domain schemas, such as an action the schema does not
+ * model. It stays journaled for repair. `failed` records an infrastructure
+ * or decryption failure.
+ */
 export const GitHubWebhookProjectionStatus = Schema.Literals([
   "pending",
   "projected",
+  "unsupported",
   "failed",
 ]).annotate({ identifier: "GitHubWebhookProjectionStatus" })
 export type GitHubWebhookProjectionStatus = typeof GitHubWebhookProjectionStatus.Type

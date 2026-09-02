@@ -22,6 +22,7 @@ import {
   GitHubWebhookJournalError,
   type GitHubWebhookJournalEntry,
 } from "../../src/GitHub/WebhookJournal.ts"
+import { WorkflowDispatcher } from "../../src/WorkflowDispatcher.ts"
 
 const runtimeContext = RuntimeContext.RuntimeContext.of({
   Type: "Test",
@@ -108,6 +109,15 @@ const run = (recorder: Recorder, body: unknown, stubs: Stubs = {}) =>
                 recorder.events.push("journal")
                 return { sequence: sequenceOne, duplicate: false }
               })),
+          load: () => Effect.succeedNone,
+          markProjection: () => Effect.void,
+        }),
+        Layer.succeed(WorkflowDispatcher, {
+          dispatchDue: (options) =>
+            Effect.sync(() => {
+              recorder.events.push(`dispatch:${options?.only?.executionKey ?? "*"}`)
+              return { claimed: 1, accepted: 1, released: 0 }
+            }),
         }),
         Layer.succeed(GitHubPayloadReader, {
           get:
@@ -150,7 +160,7 @@ describe("GitHubWebhookConsumer.handleMessage", () => {
         sequence: sequenceOne,
         duplicate: false,
       })
-      assert.deepStrictEqual(recorder.events, ["journal", "ack"])
+      assert.deepStrictEqual(recorder.events, ["journal", "ack", "dispatch:delivery-1"])
       const entry = recorder.journaled[0]
       assert.isDefined(entry)
       if (entry === undefined) return
@@ -169,7 +179,13 @@ describe("GitHubWebhookConsumer.handleMessage", () => {
       const outcome = yield* run(recorder, r2Body)
 
       assert.strictEqual(outcome._tag, "Journaled")
-      assert.deepStrictEqual(recorder.events, ["get", "journal", "delete", "ack"])
+      assert.deepStrictEqual(recorder.events, [
+        "get",
+        "journal",
+        "delete",
+        "ack",
+        "dispatch:delivery-2",
+      ])
       assert.deepStrictEqual(recorder.journaled[0]?.payload, Uint8Array.from([1, 2, 3]))
       assert.deepStrictEqual(recorder.deleted, [r2Key])
     }),

@@ -16,6 +16,8 @@ import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Result from "effect/Result"
 import * as Schema from "effect/Schema"
+import { WorkflowDispatcher } from "../WorkflowDispatcher.ts"
+import { projectGitHubWebhookRequest } from "./ProjectWebhookRequest.ts"
 import { GitHubWebhookJournal } from "./WebhookJournal.ts"
 
 export class PayloadReadError extends Data.TaggedError("PayloadReadError")<{
@@ -127,6 +129,7 @@ export const handleMessage = Effect.fn("GitHubWebhookConsumer.handleMessage")(fu
   const journal = yield* GitHubWebhookJournal
   const reader = yield* GitHubPayloadReader
   const deadLetter = yield* GitHubEventsDeadLetter
+  const dispatcher = yield* WorkflowDispatcher
 
   const retry = (reason: string, cause: unknown) =>
     Effect.logError("Retrying GitHub webhook message", cause).pipe(
@@ -206,6 +209,24 @@ export const handleMessage = Effect.fn("GitHubWebhookConsumer.handleMessage")(fu
   }
 
   message.ack()
+
+  // Post-commit dispatch attempt. A miss here is recovered by the cron singleton.
+  const request = projectGitHubWebhookRequest(deliveryId)
+  yield* dispatcher
+    .dispatchDue({
+      limit: 1,
+      only: { workflowTag: request.workflowTag, executionKey: request.executionKey },
+    })
+    .pipe(
+      Effect.catchCause(
+        Effect.fnUntraced(function* (cause) {
+          yield* Effect.logWarning("Immediate projection dispatch failed", cause).pipe(
+            Effect.annotateLogs({ id: deliveryId }),
+          )
+        }),
+      ),
+    )
+
   yield* Effect.logInfo("Journaled GitHub webhook delivery").pipe(
     Effect.annotateLogs({
       id: deliveryId,

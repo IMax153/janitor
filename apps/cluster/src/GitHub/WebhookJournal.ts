@@ -1,19 +1,23 @@
 import type { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
-import type {
+import {
   GitHubWebhookEncryptionV1,
   GitHubWebhookName,
-  GitHubWebhookPayloadSha256,
+  type GitHubWebhookPayloadSha256,
 } from "@janitor/domain/GitHub/WebhookEnvelope"
 import {
   GitHubWebhookJournalSequence,
   GitHubWebhookJournalSequenceFromStringOrNumber,
+  GitHubWebhookProjectionStatus,
 } from "@janitor/domain/GitHub/WebhookJournal"
 import * as Context from "effect/Context"
 import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
+import { WorkflowOutbox } from "../WorkflowOutbox.ts"
+import { projectGitHubWebhookRequest } from "./ProjectWebhookRequest.ts"
 
 export class GitHubWebhookJournalError extends Schema.TaggedError<GitHubWebhookJournalError>()(
   "@janitor/cluster/GitHub/WebhookJournal/GitHubWebhookJournalError",
@@ -39,6 +43,21 @@ export interface GitHubWebhookJournalReceipt {
   readonly duplicate: boolean
 }
 
+const Uint8ArrayFromBytea = Schema.instanceOf(Uint8Array)
+
+export const GitHubWebhookJournaledDelivery = Schema.Struct({
+  deliveryId: Schema.String,
+  eventName: GitHubWebhookName,
+  encryption: Schema.Struct({
+    algorithm: GitHubWebhookEncryptionV1.fields.algorithm,
+    keyId: GitHubWebhookEncryptionV1.fields.keyId,
+    iv: Uint8ArrayFromBytea,
+  }),
+  payload: Uint8ArrayFromBytea,
+  projectionStatus: GitHubWebhookProjectionStatus,
+})
+export type GitHubWebhookJournaledDelivery = typeof GitHubWebhookJournaledDelivery.Type
+
 /**
  * Durable record of every accepted webhook delivery. Delivery ID uniqueness
  * makes recording idempotent, so a lost acknowledgement retries safely.
@@ -49,10 +68,19 @@ export class GitHubWebhookJournal extends Context.Service<
     readonly record: (
       entry: GitHubWebhookJournalEntry,
     ) => Effect.Effect<GitHubWebhookJournalReceipt, GitHubWebhookJournalError>
+    readonly load: (
+      deliveryId: GitHubWebhookDeliveryId,
+    ) => Effect.Effect<Option.Option<GitHubWebhookJournaledDelivery>, GitHubWebhookJournalError>
+    readonly markProjection: (
+      deliveryId: GitHubWebhookDeliveryId,
+      status: Exclude<GitHubWebhookProjectionStatus, "pending">,
+      error: Option.Option<string>,
+    ) => Effect.Effect<void, GitHubWebhookJournalError>
   }
 >()("@janitor/cluster/GitHub/WebhookJournal/GitHubWebhookJournal", {
   make: Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
+    const outbox = yield* WorkflowOutbox
 
     const SequenceRow = Schema.Struct({ sequence: GitHubWebhookJournalSequenceFromStringOrNumber })
     const decodeRows = Schema.decodeUnknownEffect(Schema.Array(SequenceRow))
@@ -79,6 +107,10 @@ export class GitHubWebhookJournal extends Context.Service<
               ON CONFLICT (delivery_id) DO NOTHING
               RETURNING sequence
             `.pipe(Effect.flatMap(decodeRows))
+
+            // Same transaction as the journal row, so a committed delivery
+            // always has a projection request. Idempotent on duplicates.
+            yield* outbox.enqueue(projectGitHubWebhookRequest(entry.deliveryId))
 
             const first = inserted[0]
             if (first !== undefined) {
@@ -112,11 +144,82 @@ export class GitHubWebhookJournal extends Context.Service<
                 deliveryId: entry.deliveryId,
                 message: `Journal returned an invalid sequence: ${error.message}`,
               }),
+            "@janitor/cluster/WorkflowOutbox/WorkflowOutboxError": (error) =>
+              new GitHubWebhookJournalError({
+                deliveryId: entry.deliveryId,
+                message: `Outbox request failed: ${error.message}`,
+              }),
           }),
         )
     })
 
-    return { record }
+    const DeliveryRow = Schema.Struct({
+      delivery_id: Schema.String,
+      event_name: GitHubWebhookName,
+      encryption_algorithm: GitHubWebhookEncryptionV1.fields.algorithm,
+      encryption_key_id: GitHubWebhookEncryptionV1.fields.keyId,
+      encryption_iv: Uint8ArrayFromBytea,
+      payload: Uint8ArrayFromBytea,
+      projection_status: GitHubWebhookProjectionStatus,
+    })
+    const decodeDeliveryRows = Schema.decodeUnknownEffect(Schema.Array(DeliveryRow))
+
+    const load = Effect.fn("GitHubWebhookJournal.load")(function* (
+      deliveryId: GitHubWebhookDeliveryId,
+    ) {
+      const rows = yield* sql`
+        SELECT delivery_id, event_name, encryption_algorithm, encryption_key_id,
+               encryption_iv, payload, projection_status
+        FROM github_webhook_delivery
+        WHERE delivery_id = ${deliveryId}
+      `.pipe(
+        Effect.flatMap(decodeDeliveryRows),
+        Effect.catchTags({
+          SqlError: (error) =>
+            new GitHubWebhookJournalError({ deliveryId, message: error.message }),
+          SchemaError: (error) =>
+            new GitHubWebhookJournalError({
+              deliveryId,
+              message: `Journal row is invalid: ${error.message}`,
+            }),
+        }),
+      )
+      const row = rows[0]
+      if (row === undefined) {
+        return Option.none()
+      }
+      return Option.some({
+        deliveryId: row.delivery_id,
+        eventName: row.event_name,
+        encryption: {
+          algorithm: row.encryption_algorithm,
+          keyId: row.encryption_key_id,
+          iv: row.encryption_iv,
+        },
+        payload: row.payload,
+        projectionStatus: row.projection_status,
+      })
+    })
+
+    const markProjection = Effect.fn("GitHubWebhookJournal.markProjection")(function* (
+      deliveryId: GitHubWebhookDeliveryId,
+      status: Exclude<GitHubWebhookProjectionStatus, "pending">,
+      error: Option.Option<string>,
+    ) {
+      yield* sql`
+        UPDATE github_webhook_delivery
+        SET projection_status = ${status},
+            projection_error = ${Option.getOrNull(error)},
+            projected_at = CLOCK_TIMESTAMP()
+        WHERE delivery_id = ${deliveryId}
+      `.pipe(
+        Effect.mapError(
+          (cause) => new GitHubWebhookJournalError({ deliveryId, message: cause.message }),
+        ),
+      )
+    })
+
+    return { record, load, markProjection }
   }),
 }) {
   static readonly layer = Layer.effect(this, this.make)
