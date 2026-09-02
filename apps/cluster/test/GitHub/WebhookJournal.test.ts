@@ -1,14 +1,14 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql"
-import { assert, describe, layer } from "@effect/vitest"
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import * as PgClient from "@effect/sql-pg/PgClient"
 import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
+import * as FileSystem from "effect/FileSystem"
+import * as Path from "effect/Path"
 import * as Layer from "effect/Layer"
 import * as Redacted from "effect/Redacted"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
-import { existsSync } from "node:fs"
-import * as fs from "node:fs/promises"
-import * as path from "node:path"
 import { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
 import {
   GitHubWebhookEncryptionKeyId,
@@ -20,24 +20,16 @@ import {
   type GitHubWebhookJournalEntry,
 } from "../../src/GitHub/WebhookJournal.ts"
 
-const migrationsDir = path.resolve(import.meta.dirname, "../../migrations")
-
-// Testcontainers needs a container runtime. Skip rather than fail where none exists.
-const hasContainerRuntime =
-  process.env.DOCKER_HOST !== undefined ||
-  process.env.TESTCONTAINERS_HOST_OVERRIDE !== undefined ||
-  existsSync("/var/run/docker.sock") ||
-  existsSync(path.join(process.env.HOME ?? "", ".docker/run/docker.sock"))
-
-/**
- * Applies every SQL migration in file order, mirroring what Neon and the
- * local Docker image do on first boot.
- */
 const applyMigrations = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  const path = yield* Path.Path
   const sql = yield* SqlClient.SqlClient
-  const files = yield* Effect.promise(() => fs.readdir(migrationsDir))
+
+  const migrationsDir = path.resolve(import.meta.dirname, "../../migrations")
+  const files = yield* fs.readDirectory(migrationsDir)
+
   for (const file of files.filter((name) => name.endsWith(".sql")).sort()) {
-    const text = yield* Effect.promise(() => fs.readFile(path.join(migrationsDir, file), "utf8"))
+    const text = yield* fs.readFileString(path.join(migrationsDir, file), "utf8")
     yield* sql.unsafe(text)
   }
 })
@@ -48,14 +40,19 @@ const PostgresLayer = Layer.unwrap(
       Effect.promise((): Promise<StartedPostgreSqlContainer> =>
         new PostgreSqlContainer("postgres:18-alpine").start(),
       ),
-      (started) => Effect.promise(() => started.stop()),
+      (container) => Effect.promise(() => container.stop()),
     )
-    return PgClient.layer({ url: Redacted.make(container.getConnectionUri()) })
+    return PgClient.layer({
+      url: Redacted.make(container.getConnectionUri(), {
+        label: "postgres-connection-url",
+      }),
+    })
   }),
 )
 
 const JournalLayer = GitHubWebhookJournal.layer.pipe(
   Layer.provideMerge(Layer.effectDiscard(applyMigrations).pipe(Layer.provideMerge(PostgresLayer))),
+  Layer.provide(NodeServices.layer),
 )
 
 const entry = (deliveryId: string): GitHubWebhookJournalEntry => ({
@@ -71,11 +68,7 @@ const entry = (deliveryId: string): GitHubWebhookJournalEntry => ({
   payload: Uint8Array.from([0, 13, 10, 0xff, 0xfe, 123, 125]),
 })
 
-const describePostgres = hasContainerRuntime
-  ? layer(JournalLayer, { timeout: "2 minutes" })
-  : (name: string, _f: unknown) => describe.skip(name, () => {})
-
-describePostgres("GitHubWebhookJournal against Postgres", (it) => {
+layer(JournalLayer, { timeout: "2 minutes" })("GitHubWebhookJournal against Postgres", (it) => {
   it.effect("records a delivery with a monotonic sequence and pending status", () =>
     Effect.gen(function* () {
       const journal = yield* GitHubWebhookJournal
