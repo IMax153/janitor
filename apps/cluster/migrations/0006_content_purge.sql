@@ -1,13 +1,5 @@
-ALTER TABLE github_webhook_delivery
-  ADD COLUMN installation_id TEXT,
-  ADD COLUMN purged_at TIMESTAMPTZ;
-
-CREATE INDEX github_webhook_delivery_installation_idx
-  ON github_webhook_delivery (installation_id)
-  WHERE purged_at IS NULL;
-
-ALTER TABLE github_repository ADD COLUMN content_purged_at TIMESTAMPTZ;
-
+-- Scheduled deletion of private content after uninstall or confirmed access
+-- loss, with a grace period during which restored access cancels it.
 CREATE TABLE content_purge (
   subject_kind TEXT NOT NULL CHECK (subject_kind IN ('installation', 'repository')),
   subject_id TEXT NOT NULL,

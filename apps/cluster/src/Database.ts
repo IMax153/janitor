@@ -7,17 +7,15 @@ import * as Redacted from "effect/Redacted"
 
 const LocalDatabasePassword = Redacted.make("janitor")
 
-// Resource ids below predate the rename and stay fixed: changing them would
-// replace the live database and Hyperdrive configuration on deploy.
 const LocalDatabase = Effect.gen(function* () {
-  const image = yield* Docker.Image("TopologyProbePostgresImage", {
+  const image = yield* Docker.Image("PostgresImage", {
     build: {
       context: "apps/cluster",
       dockerfile: "docker/postgres/Dockerfile",
     },
   })
 
-  const container = yield* Docker.Container("TopologyProbePostgres", {
+  const container = yield* Docker.Container("Postgres", {
     image,
     environment: {
       POSTGRES_DB: "janitor",
@@ -51,7 +49,7 @@ const LocalDatabase = Effect.gen(function* () {
 })
 
 export const NeonDatabase = Effect.gen(function* () {
-  const project = yield* Neon.Project("TopologyProbeDatabase", {
+  const project = yield* Neon.Project("Database", {
     region: "aws-us-east-1",
     pgVersion: 18,
     migrations: "apps/cluster/migrations",
@@ -72,7 +70,7 @@ export const JanitorHyperdrive = Effect.gen(function* () {
   const isDev = yield* Alchemy.ALCHEMY_DEV
   const database = yield* JanitorDatabase
 
-  return yield* Cloudflare.Hyperdrive.Connection("TopologyProbeHyperdrive", {
+  return yield* Cloudflare.Hyperdrive.Connection("Hyperdrive", {
     origin: database.origin,
     ...(isDev ? { dev: database.origin } : undefined),
   })

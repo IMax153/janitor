@@ -1,3 +1,6 @@
+-- Local mirror of GitHub state, keyed by stable GitHub IDs. Names and handles
+-- are mutable attributes. projected_sequence and github_updated_at fence
+-- writes so an older observation never overwrites a newer one.
 CREATE TABLE github_installation (
   installation_id TEXT PRIMARY KEY,
   account_database_id TEXT NOT NULL,
@@ -20,7 +23,8 @@ CREATE TABLE github_repository (
   access TEXT NOT NULL CHECK (access IN ('accessible', 'suspect', 'lost')),
   enabled BOOLEAN NOT NULL DEFAULT FALSE,
   projected_sequence BIGINT NOT NULL,
-  observed_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
+  observed_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  content_purged_at TIMESTAMPTZ
 );
 
 CREATE INDEX github_repository_installation_idx ON github_repository (installation_id);
@@ -36,10 +40,14 @@ CREATE TABLE github_label (
   PRIMARY KEY (repository_id, label_id)
 );
 
+-- Issues and pull requests share this table, keyed by repository and number.
+-- Issue-side IDs are canonical and bound by scans; pull request webhooks lack them.
 CREATE TABLE github_entity (
   repository_id TEXT NOT NULL,
   number INTEGER NOT NULL CHECK (number > 0),
   kind TEXT NOT NULL CHECK (kind IN ('issue', 'pull_request')),
+  issue_id TEXT,
+  issue_node_id TEXT,
   title TEXT NOT NULL,
   body TEXT,
   author_login TEXT NOT NULL,
@@ -50,6 +58,8 @@ CREATE TABLE github_entity (
   observed_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   PRIMARY KEY (repository_id, number)
 );
+
+CREATE UNIQUE INDEX github_entity_issue_id_idx ON github_entity (issue_id) WHERE issue_id IS NOT NULL;
 
 CREATE TABLE github_pull_request (
   repository_id TEXT NOT NULL,

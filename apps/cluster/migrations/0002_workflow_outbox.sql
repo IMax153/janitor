@@ -1,3 +1,5 @@
+-- Requests to submit workflow executions. Rows are claimed with a bounded
+-- lease and fencing token so duplicate dispatchers cannot both complete one.
 CREATE TABLE workflow_outbox (
   workflow_tag TEXT NOT NULL,
   execution_key TEXT NOT NULL,
@@ -14,14 +16,3 @@ CREATE TABLE workflow_outbox (
 CREATE INDEX workflow_outbox_due_idx
   ON workflow_outbox (due_at)
   WHERE accepted_at IS NULL;
-
-ALTER TABLE github_webhook_delivery
-  ADD COLUMN projection_error TEXT,
-  ADD COLUMN projected_at TIMESTAMPTZ;
-
-ALTER TABLE github_webhook_delivery
-  DROP CONSTRAINT github_webhook_delivery_projection_status_check;
-
-ALTER TABLE github_webhook_delivery
-  ADD CONSTRAINT github_webhook_delivery_projection_status_check
-  CHECK (projection_status IN ('pending', 'projected', 'unsupported', 'failed'));
