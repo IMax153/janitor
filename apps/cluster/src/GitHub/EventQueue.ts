@@ -26,7 +26,7 @@ export class GitHubEventQueue extends Context.Service<
       envelope: GitHubWebhookEnvelopeV1,
     ) => Effect.Effect<void, EnqueueError, RuntimeContext>
   }
->()("@janitor/webhooks/GitHub/EventQueue/GitHubEventQueue") {}
+>()("@janitor/cluster/GitHub/EventQueue/GitHubEventQueue") {}
 
 const make = Effect.gen(function* () {
   const resource = yield* GitHubEventsQueue

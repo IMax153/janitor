@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
-import { GitHubWebHookRoutesLayer } from "./GitHub/Http.ts"
+import { GitHubWebHookRoutesLayer } from "./GitHubWebhook.ts"
 import { RateLimitMiddlewareLayer } from "./Middleware.ts"
 
 const ApiRouterLayer = Layer.effect(

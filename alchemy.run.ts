@@ -6,7 +6,7 @@ import * as Provider from "alchemy/Provider"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 
-import { TopologyProbeDatabase } from "@janitor/cluster/Database"
+import { JanitorDatabase } from "@janitor/cluster/Database"
 import ClusterWorker from "@janitor/cluster/Worker"
 
 const DockerProviders = Layer.effect(
@@ -26,7 +26,7 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
-    const database = yield* TopologyProbeDatabase
+    const database = yield* JanitorDatabase
     const cluster = yield* ClusterWorker
 
     const website = yield* Cloudflare.Website.Foldkit("Website", {

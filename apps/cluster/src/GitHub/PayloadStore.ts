@@ -43,7 +43,7 @@ export class GitHubPayloadStore extends Context.Service<
       key: GitHubWebhookR2ObjectKey,
     ) => Effect.Effect<void, PayloadStoreError, RuntimeContext>
   }
->()("@janitor/webhooks/GitHub/PayloadStore/GitHubPayloadStore") {}
+>()("@janitor/cluster/GitHub/PayloadStore/GitHubPayloadStore") {}
 
 export const payloadKey = (deliveryId: GitHubWebhookDeliveryId): GitHubWebhookR2ObjectKey =>
   GitHubWebhookR2ObjectKey.make(`${PAYLOAD_KEY_PREFIX}${deliveryId}`)

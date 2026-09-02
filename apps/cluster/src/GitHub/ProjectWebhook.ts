@@ -4,7 +4,7 @@ import {
   GitHubWebhookProjectionStatus,
   type GitHubWebhookJournalSequence,
 } from "@janitor/domain/GitHub/WebhookJournal"
-import { PayloadCipher } from "@janitor/webhooks/PayloadCipher"
+import { PayloadCipher } from "../PayloadCipher.ts"
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as Result from "effect/Result"

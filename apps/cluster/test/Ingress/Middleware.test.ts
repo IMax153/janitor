@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
-import { RateLimitMiddlewareLayer } from "@janitor/webhooks/Middleware"
+import { RateLimitMiddlewareLayer } from "../../src/Ingress/Middleware.ts"
 
 const runtimeContext = RuntimeContext.RuntimeContext.of({
   Type: "Test",

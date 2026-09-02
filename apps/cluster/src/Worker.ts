@@ -3,20 +3,19 @@ import * as Cloudflare from "alchemy/Cloudflare"
 import * as Postgres from "alchemy/SQL/Postgres"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
 import * as Path from "effect/Path"
 import * as Etag from "effect/unstable/http/Etag"
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient"
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
-import { GitHubEventsDeadLetterQueue, GitHubEventsQueue } from "@janitor/webhooks/GitHub/EventQueue"
-import { GitHubWebhookPayloadsBucket } from "@janitor/webhooks/GitHub/PayloadStore"
-import { RoutesLayer as WebhookRoutesLayer } from "@janitor/webhooks/Http"
-import * as PayloadCipher from "@janitor/webhooks/PayloadCipher"
+import { GitHubEventsDeadLetterQueue, GitHubEventsQueue } from "./GitHub/EventQueue.ts"
+import { GitHubWebhookPayloadsBucket } from "./GitHub/PayloadStore.ts"
+import { RoutesLayer as WebhookRoutesLayer } from "./Ingress/Routes.ts"
+import * as PayloadCipher from "./PayloadCipher.ts"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
-import { TopologyProbeHyperdrive } from "./Database.ts"
+import { JanitorHyperdrive } from "./Database.ts"
 import {
   GitHubEventsDeadLetter,
   GitHubPayloadReader,
@@ -48,11 +47,6 @@ import {
 import { WorkflowDispatcher } from "./WorkflowDispatcher.ts"
 import { WorkflowOutbox } from "./WorkflowOutbox.ts"
 import { WorkflowOutboxCronLayer, WorkflowOutboxCronName } from "./WorkflowOutboxCron.ts"
-import { MigrationProbe } from "./MigrationProbe.ts"
-import { TopologyProbe, TopologyProbePayload, TopologyProbeLayer } from "./TopologyProbe.ts"
-import { TopologyProbeCronLayer, TopologyProbeCronName } from "./TopologyProbeCron.ts"
-import { TopologyProbeQueue } from "./TopologyProbeQueue.ts"
-import { TopologyProbeStore } from "./TopologyProbeStore.ts"
 
 export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
   "ClusterWorker",
@@ -61,9 +55,7 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
     compatibility: { flags: ["nodejs_compat"] },
   },
   Effect.gen(function* () {
-    const hyperdrive = yield* Cloudflare.Hyperdrive.Connect(TopologyProbeHyperdrive)
-    const queueResource = yield* TopologyProbeQueue
-    const queue = yield* Cloudflare.Queues.WriteQueue(queueResource)
+    const hyperdrive = yield* Cloudflare.Hyperdrive.Connect(JanitorHyperdrive)
 
     const githubEventsQueue = yield* GitHubEventsQueue
     const githubDeadLetterQueue = yield* Cloudflare.Queues.WriteQueue(
@@ -98,8 +90,6 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
     )
 
     const ClusterLayer = Layer.mergeAll(
-      TopologyProbeLayer,
-      TopologyProbeCronLayer,
       ProjectGitHubWebhookLayer,
       SyncInstallationInventoryLayer,
       SyncRepositoryTrackLayer,
@@ -119,7 +109,6 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       Layer.provideMerge(GitHubTransportLayer),
       Layer.provideMerge(
         Layer.mergeAll(
-          TopologyProbeStore.layer,
           GitHubWebhookJournal.layer,
           GitHubReadModel.layer,
           SyncTargets.layer,
@@ -138,13 +127,10 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       entities: [],
       layer: ClusterLayer,
     })
-    const migrationProbe = yield* MigrationProbe
-
-    const wakeTopologyProbe = cluster.wake(TopologyProbeCronName)
     const wakeOutboxDispatch = cluster.wake(WorkflowOutboxCronName)
     const wakeSyncRepair = cluster.wake(SyncRepairCronName)
     yield* Cloudflare.Workers.cron("* * * * *", () =>
-      Effect.all([wakeTopologyProbe(), wakeOutboxDispatch(), wakeSyncRepair()], { discard: true }),
+      Effect.all([wakeOutboxDispatch(), wakeSyncRepair()], { discard: true }),
     )
 
     yield* Cloudflare.Queues.consumeQueueMessages(
@@ -167,22 +153,6 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
         ),
     )
 
-    yield* Cloudflare.Queues.consumeQueueMessages(queueResource, (messages) =>
-      cluster.provide(
-        Stream.runForEach(messages, (message) =>
-          Effect.gen(function* () {
-            const payload = yield* Schema.decodeUnknownEffect(TopologyProbePayload)(message.body)
-            const store = yield* TopologyProbeStore
-
-            yield* store.commit({
-              id: payload.executionKey,
-              step: "queue",
-            })
-          }),
-        ),
-      ),
-    )
-
     // Signed webhook ingress lives in the same deployment as the consumer and
     // workflows, so there is no internal hop between acceptance and journaling.
     const HttpPlatformStubLayer = Layer.succeed(HttpPlatform.HttpPlatform, {
@@ -202,85 +172,12 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       HttpServerResponse.empty({ status: 500 }),
     )
 
-    const probes = Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest
-      const url = new URL(request.originalUrl)
-
-      const submitsProbe = url.pathname === "/topology-probe"
-      const waitsForCompletion = url.pathname === "/topology-probe/wait"
-      const queuesProbe = url.pathname === "/topology-probe/queue"
-      const verifiesMigration = url.pathname === "/migration-probe"
-
-      if (
-        request.method !== "POST" ||
-        (!submitsProbe && !waitsForCompletion && !queuesProbe && !verifiesMigration)
-      ) {
-        return HttpServerResponse.empty({ status: 404 })
-      }
-
-      if (verifiesMigration) {
-        const result = yield* migrationProbe.getByName("cluster-spike").verify()
-        return yield* HttpServerResponse.json(result)
-      }
-
-      const payload = yield* HttpServerRequest.schemaBodyJson(TopologyProbePayload)
-
-      if (queuesProbe) {
-        const sent = yield* queue.send(payload).pipe(
-          Effect.as(true),
-          Effect.catchTag("SendError", () => Effect.succeed(false)),
-        )
-
-        if (!sent) {
-          return yield* HttpServerResponse.json(
-            {
-              error: "The topology probe message could not be queued; retry the request",
-            },
-            { status: 503 },
-          )
-        }
-
-        return yield* HttpServerResponse.json(
-          {
-            queued: true,
-            executionKey: payload.executionKey,
-          },
-          { status: 202 },
-        )
-      }
-
-      const executionId = yield* TopologyProbe.executionId(payload)
-
-      if (waitsForCompletion) {
-        const result = yield* TopologyProbe.execute(payload)
-        return yield* HttpServerResponse.json({ executionId, result })
-      }
-
-      yield* TopologyProbe.execute(payload, { discard: true })
-
-      return yield* HttpServerResponse.json({ executionId }, { status: 202 })
-    }).pipe(
-      Effect.catchTag("SchemaError", () =>
-        HttpServerResponse.json(
-          { error: 'Expected JSON shaped like: {"executionKey":"non-empty-string"}' },
-          { status: 400 },
-        ),
-      ),
-      Effect.catchTag("@janitor/cluster/Probe/TopologyProbeStoreError", () =>
-        HttpServerResponse.json(
-          {
-            error:
-              "The topology probe database activity failed; restore the database and retry with a new execution key",
-          },
-          { status: 503 },
-        ),
-      ),
-    )
-
     const handler = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest
       const url = new URL(request.originalUrl)
-      return url.pathname.startsWith("/api/v1/") ? yield* webhooks : yield* probes
+      return url.pathname.startsWith("/api/v1/")
+        ? yield* webhooks
+        : HttpServerResponse.empty({ status: 404 })
     })
 
     return {

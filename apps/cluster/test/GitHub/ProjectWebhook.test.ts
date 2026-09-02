@@ -13,7 +13,7 @@ import {
   GitHubWebhookName,
 } from "@janitor/domain/GitHub/WebhookEnvelope"
 import type { GitHubWebhookProjectionStatus } from "@janitor/domain/GitHub/WebhookJournal"
-import * as PayloadCipher from "@janitor/webhooks/PayloadCipher"
+import * as PayloadCipher from "../../src/PayloadCipher.ts"
 import { ProjectGitHubWebhook, ProjectGitHubWebhookLayer } from "../../src/GitHub/ProjectWebhook.ts"
 import { GitHubReadModel } from "../../src/GitHub/ReadModel.ts"
 import { ContentPurge } from "../../src/ContentPurge.ts"

@@ -10,16 +10,16 @@ import {
   type GitHubWebhookEnvelopeV1,
   type GitHubWebhookR2ObjectKey,
 } from "@janitor/domain/GitHub/WebhookEnvelope"
-import { EnqueueError, GitHubEventQueue } from "@janitor/webhooks/GitHub/EventQueue"
-import { GitHubWebhookRoutesLayerNoDeps } from "@janitor/webhooks/GitHub/Http"
+import { EnqueueError, GitHubEventQueue } from "../../src/GitHub/EventQueue.ts"
+import { GitHubWebhookRoutesLayerNoDeps } from "../../src/Ingress/GitHubWebhook.ts"
 import {
   GitHubPayloadStore,
   PayloadStoreError,
   payloadKey,
   type PutPayloadInput,
-} from "@janitor/webhooks/GitHub/PayloadStore"
-import * as PayloadCipher from "@janitor/webhooks/PayloadCipher"
-import { WebhookVerifier } from "@janitor/webhooks/WebhookVerifier"
+} from "../../src/GitHub/PayloadStore.ts"
+import * as PayloadCipher from "../../src/PayloadCipher.ts"
+import { WebhookVerifier } from "../../src/Ingress/WebhookVerifier.ts"
 import { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
 
 const runtimeContext = RuntimeContext.RuntimeContext.of({

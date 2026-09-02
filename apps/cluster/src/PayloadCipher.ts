@@ -46,7 +46,7 @@ export class PayloadCipher extends Context.Service<
       ciphertext: Uint8Array,
     ) => Effect.Effect<Uint8Array<ArrayBuffer>, PayloadCipherError>
   }
->()("@janitor/webhooks/PayloadCipher") {}
+>()("@janitor/cluster/PayloadCipher") {}
 
 export interface PayloadCipherKey {
   readonly key: Uint8Array

@@ -15,7 +15,7 @@ export class WebhookVerifier extends Context.Service<
       body: Uint8Array,
     ) => Effect.Effect<boolean, InvalidSignatureError | VerifySignatureError>
   }
->()("webhook/WebhookVerifier") {}
+>()("@janitor/cluster/Ingress/WebhookVerifier") {}
 
 export class InvalidSignatureError extends Data.TaggedError("InvalidSignatureError")<{
   readonly signature: string

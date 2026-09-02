@@ -6,7 +6,7 @@ import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
 import { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
 import { GitHubWebhookEncryptionKeyId } from "@janitor/domain/GitHub/WebhookEnvelope"
-import * as PayloadCipher from "@janitor/webhooks/PayloadCipher"
+import * as PayloadCipher from "../src/PayloadCipher.ts"
 
 const keyId = GitHubWebhookEncryptionKeyId.make("key-1")
 const deliveryId = GitHubWebhookDeliveryId.make("delivery-1")

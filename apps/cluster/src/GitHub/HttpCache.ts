@@ -1,7 +1,7 @@
 import { GITHUB_API_VERSION } from "@janitor/domain/GitHub/Api"
 import { GitHubWebhookDeliveryId, type GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
 import { GitHubWebhookEncryptionKeyId } from "@janitor/domain/GitHub/WebhookEnvelope"
-import { PayloadCipher } from "@janitor/webhooks/PayloadCipher"
+import { PayloadCipher } from "../PayloadCipher.ts"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
