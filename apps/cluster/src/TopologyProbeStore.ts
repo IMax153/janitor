@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
 
-export const TopologyProbeStep = Schema.Literals(["first", "second"])
+export const TopologyProbeStep = Schema.Literals(["first", "second", "queue", "cron"])
 export type TopologyProbeStep = typeof TopologyProbeStep.Type
 
 export class TopologyProbeStoreError extends Schema.TaggedError<TopologyProbeStoreError>()(

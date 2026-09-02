@@ -8,6 +8,7 @@ catalogMode: prefer
 catalog:
   "@effect/platform-browser": 4.0.0-rc.112
   "@effect/platform-node": 4.0.0-rc.112
+  "@effect/sql-pg": 4.0.0-rc.112
   "@effect/tsgo": ^0.38.0
   "@effect/vitest": 4.0.0-rc.112
   "@foldkit/devtools": ^0.152.0

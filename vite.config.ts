@@ -44,6 +44,14 @@ export default defineConfig({
         command: "vp exec alchemy dev",
         cache: false,
       },
+      "cloudflare:cluster-spike": {
+        command: "vp exec alchemy deploy --stage cluster-spike",
+        cache: false,
+      },
+      "cloudflare:cluster-redeploy": {
+        command: "vp exec alchemy deploy --stage cluster-spike --force",
+        cache: false,
+      },
     },
   },
 })
