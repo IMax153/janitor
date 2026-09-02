@@ -1,8 +1,5 @@
 import * as Schema from "effect/Schema"
 import * as SchemaGetter from "effect/SchemaGetter"
-import * as Model from "effect/unstable/schema/Model"
-import { lifecycleTimestamps } from "../Shared/Timestamps.ts"
-import { GitHubInstallationId, GitHubRepositoryDatabaseId, GitHubRepositoryNodeId } from "./Id.ts"
 
 const GitHubRepositoryNameSegment = Schema.NonEmptyString.check(
   Schema.isPattern(/^[^/\s]+$/),
@@ -26,27 +23,3 @@ export const GitHubRepositoryFullNameFromString = Schema.TemplateLiteralParser([
     }),
   )
   .annotate({ identifier: "GitHubRepositoryFullNameFromString" })
-
-export const GitHubRepositoryId = Schema.NonEmptyString.check(Schema.isUUID(7))
-  .pipe(Schema.brand("GitHubRepositoryId"))
-  .annotate({
-    identifier: "GitHubRepositoryId",
-  })
-export type GitHubRepositoryId = typeof GitHubRepositoryId.Type
-
-export class GitHubRepository extends Model.Class<GitHubRepository>("GitHubRepository")({
-  id: Model.UuidV7Insert(GitHubRepositoryId),
-  githubDatabaseId: GitHubRepositoryDatabaseId,
-  githubNodeId: GitHubRepositoryNodeId,
-  owner: GitHubRepositoryFullName.fields.owner,
-  repo: GitHubRepositoryFullName.fields.repo,
-  isPrivate: Schema.Boolean,
-  installationId: GitHubInstallationId,
-  enabled: Schema.Boolean,
-  rulesRevision: Schema.Int,
-  ...lifecycleTimestamps,
-}) {
-  get fullName(): string {
-    return this.owner + "/" + this.repo
-  }
-}

@@ -2,10 +2,10 @@ import * as Schema from "effect/Schema"
 import * as SchemaTransformation from "effect/SchemaTransformation"
 
 const JournalSequenceString = Schema.NonEmptyString.check(
-  Schema.isPattern(/^[1-9][0-9]*$/),
+  Schema.isPattern(/^(0|[1-9][0-9]*)$/),
 ).annotate({ identifier: "GitHubWebhookJournalSequenceString" })
 
-const JournalSequenceNumber = Schema.Int.check(Schema.isGreaterThan(0)).annotate({
+const JournalSequenceNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).annotate({
   identifier: "GitHubWebhookJournalSequenceNumber",
 })
 
@@ -17,6 +17,12 @@ export const GitHubWebhookJournalSequence = JournalSequenceString.pipe(
   Schema.brand("GitHubWebhookJournalSequence"),
 ).annotate({ identifier: "GitHubWebhookJournalSequence" })
 export type GitHubWebhookJournalSequence = typeof GitHubWebhookJournalSequence.Type
+
+/**
+ * Journal rows start at 1. Zero is the fence for observations no webhook
+ * motivated, such as scheduled scans, so any later webhook fence wins.
+ */
+export const GitHubWebhookJournalSequenceZero = GitHubWebhookJournalSequence.make("0")
 
 export const GitHubWebhookJournalSequenceFromNumber = JournalSequenceNumber.pipe(
   Schema.decodeTo(JournalSequenceString, SchemaTransformation.numberFromString.flip()),

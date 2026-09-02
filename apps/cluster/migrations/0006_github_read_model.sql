@@ -1,0 +1,75 @@
+CREATE TABLE github_installation (
+  installation_id TEXT PRIMARY KEY,
+  account_database_id TEXT NOT NULL,
+  account_handle TEXT NOT NULL,
+  account_type TEXT NOT NULL CHECK (account_type IN ('Enterprise', 'Organization', 'User')),
+  repository_selection TEXT NOT NULL CHECK (repository_selection IN ('all', 'selected')),
+  status TEXT NOT NULL CHECK (status IN ('active', 'suspended', 'deleted')),
+  html_url TEXT NOT NULL,
+  projected_sequence BIGINT NOT NULL,
+  observed_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
+);
+
+CREATE TABLE github_repository (
+  repository_id TEXT PRIMARY KEY,
+  node_id TEXT,
+  installation_id TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  is_private BOOLEAN,
+  access TEXT NOT NULL CHECK (access IN ('accessible', 'suspect', 'lost')),
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  projected_sequence BIGINT NOT NULL,
+  observed_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
+);
+
+CREATE INDEX github_repository_installation_idx ON github_repository (installation_id);
+
+CREATE TABLE github_label (
+  repository_id TEXT NOT NULL,
+  label_id TEXT NOT NULL,
+  node_id TEXT,
+  name TEXT NOT NULL,
+  availability TEXT NOT NULL CHECK (availability IN ('available', 'suspect', 'unavailable')),
+  projected_sequence BIGINT NOT NULL,
+  observed_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  PRIMARY KEY (repository_id, label_id)
+);
+
+CREATE TABLE github_entity (
+  repository_id TEXT NOT NULL,
+  number INTEGER NOT NULL CHECK (number > 0),
+  kind TEXT NOT NULL CHECK (kind IN ('issue', 'pull_request')),
+  title TEXT NOT NULL,
+  body TEXT,
+  author_login TEXT NOT NULL,
+  author_id TEXT,
+  state TEXT NOT NULL CHECK (state IN ('open', 'closed')),
+  github_updated_at TIMESTAMPTZ NOT NULL,
+  projected_sequence BIGINT NOT NULL,
+  observed_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  PRIMARY KEY (repository_id, number)
+);
+
+CREATE TABLE github_pull_request (
+  repository_id TEXT NOT NULL,
+  number INTEGER NOT NULL CHECK (number > 0),
+  pull_request_id TEXT NOT NULL,
+  pull_request_node_id TEXT NOT NULL,
+  base_ref TEXT NOT NULL,
+  draft BOOLEAN NOT NULL,
+  head_sha TEXT NOT NULL,
+  merged BOOLEAN NOT NULL,
+  PRIMARY KEY (repository_id, number),
+  FOREIGN KEY (repository_id, number) REFERENCES github_entity (repository_id, number) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX github_pull_request_id_idx ON github_pull_request (pull_request_id);
+
+CREATE TABLE github_entity_label (
+  repository_id TEXT NOT NULL,
+  number INTEGER NOT NULL,
+  label_id TEXT NOT NULL,
+  PRIMARY KEY (repository_id, number, label_id),
+  FOREIGN KEY (repository_id, number) REFERENCES github_entity (repository_id, number) ON DELETE CASCADE
+);

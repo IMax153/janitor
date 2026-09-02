@@ -29,18 +29,36 @@ const PullRequestBase = Schema.Struct({
   ref: Schema.NonEmptyString,
 }).annotate({ identifier: "PullRequestBase" })
 
+export const PullRequestLabel = Schema.Struct({
+  id: GitHubLabelDatabaseIdFromStringOrNumber,
+  nodeId: Schema.optionalKey(GitHubLabelNodeId),
+  name: Schema.NonEmptyString,
+})
+  .pipe(Schema.encodeKeys({ nodeId: "node_id" }))
+  .annotate({ identifier: "PullRequestLabel" })
+export type PullRequestLabel = typeof PullRequestLabel.Type
+
+export const PullRequestState = Schema.Literals(["open", "closed"]).annotate({
+  identifier: "PullRequestState",
+})
+export type PullRequestState = typeof PullRequestState.Type
+
 export const PullRequest = Schema.Struct({
   id: GitHubPullRequestDatabaseIdFromStringOrNumber,
   number: PositiveInteger,
   nodeId: GitHubPullRequestNodeId,
   title: Schema.NonEmptyString,
   body: Schema.Union([Schema.String, Schema.Null]),
+  state: PullRequestState,
   draft: Schema.Boolean,
+  merged: Schema.Boolean,
+  updatedAt: Schema.DateTimeUtcFromString,
+  labels: Schema.Array(PullRequestLabel),
   user: PullRequestUser,
   head: PullRequestHead,
   base: PullRequestBase,
 })
-  .pipe(Schema.encodeKeys({ nodeId: "node_id" }))
+  .pipe(Schema.encodeKeys({ nodeId: "node_id", updatedAt: "updated_at" }))
   .annotate({ identifier: "PullRequest" })
 export type PullRequest = typeof PullRequest.Type
 
@@ -61,14 +79,6 @@ const PullRequestSender = Schema.Struct({
   id: GitHubUserDatabaseIdFromStringOrNumber,
   login: Schema.NonEmptyString,
 }).annotate({ identifier: "PullRequestSender" })
-
-const PullRequestLabel = Schema.Struct({
-  id: GitHubLabelDatabaseIdFromStringOrNumber,
-  nodeId: Schema.optionalKey(GitHubLabelNodeId),
-  name: Schema.NonEmptyString,
-})
-  .pipe(Schema.encodeKeys({ nodeId: "node_id" }))
-  .annotate({ identifier: "PullRequestLabel" })
 
 const PullRequestStringChange = Schema.Struct({
   from: Schema.String,
@@ -111,6 +121,13 @@ export const PullRequestOpened = BasePullRequestPayloadStruct.pipe(
   .pipe(Schema.encodeKeys({ pullRequest: "pull_request" }))
   .annotate({ identifier: "PullRequestOpened" })
 export type PullRequestOpened = typeof PullRequestOpened.Type
+
+export const PullRequestClosed = BasePullRequestPayloadStruct.pipe(
+  Schema.fieldsAssign({ action: Schema.Literal("closed") }),
+)
+  .pipe(Schema.encodeKeys({ pullRequest: "pull_request" }))
+  .annotate({ identifier: "PullRequestClosed" })
+export type PullRequestClosed = typeof PullRequestClosed.Type
 
 export const PullRequestReopened = BasePullRequestPayloadStruct.pipe(
   Schema.fieldsAssign({ action: Schema.Literal("reopened") }),
@@ -176,6 +193,7 @@ export type PullRequestUnlabeled = typeof PullRequestUnlabeled.Type
 
 export const PullRequestWebhookPayload = Schema.Union([
   PullRequestOpened,
+  PullRequestClosed,
   PullRequestReopened,
   PullRequestSynchronized,
   PullRequestEdited,

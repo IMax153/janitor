@@ -69,6 +69,21 @@ export const GitHubUserDatabaseIdFromStringOrNumber = Schema.Union([
   GitHubUserDatabaseId,
 ]).annotate({ identifier: "GitHubUserDatabaseIdFromStringOrNumber" })
 
+export const GitHubIssueDatabaseId = GitHubDatabaseIdString.pipe(
+  Schema.brand("GitHubIssueDatabaseId"),
+).annotate({ identifier: "GitHubIssueDatabaseId" })
+export type GitHubIssueDatabaseId = typeof GitHubIssueDatabaseId.Type
+
+export const GitHubIssueDatabaseIdFromNumber = GitHubDatabaseIdNumber.pipe(
+  Schema.decodeTo(GitHubDatabaseIdString, SchemaTransformation.numberFromString.flip()),
+  Schema.brand("GitHubIssueDatabaseId"),
+).annotate({ identifier: "GitHubIssueDatabaseIdFromNumber" })
+
+export const GitHubIssueDatabaseIdFromStringOrNumber = Schema.Union([
+  GitHubIssueDatabaseIdFromNumber,
+  GitHubIssueDatabaseId,
+]).annotate({ identifier: "GitHubIssueDatabaseIdFromStringOrNumber" })
+
 export const GitHubPullRequestDatabaseId = GitHubDatabaseIdString.pipe(
   Schema.brand("GitHubPullRequestDatabaseId"),
 ).annotate({ identifier: "GitHubPullRequestDatabaseId" })

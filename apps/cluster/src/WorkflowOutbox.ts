@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
+import { describeError } from "./SqlErrors.ts"
 
 export class WorkflowOutboxError extends Schema.TaggedError<WorkflowOutboxError>()(
   "@janitor/cluster/WorkflowOutbox/WorkflowOutboxError",
@@ -75,7 +76,7 @@ export class WorkflowOutbox extends Context.Service<
       <A, R>(effect: Effect.Effect<A, { readonly message: string }, R>) =>
         Effect.mapError(
           effect,
-          (error) => new WorkflowOutboxError({ operation, message: error.message }),
+          (error) => new WorkflowOutboxError({ operation, message: describeError(error) }),
         )
 
     const enqueue = Effect.fn("WorkflowOutbox.enqueue")(function* (request: OutboxRequest) {

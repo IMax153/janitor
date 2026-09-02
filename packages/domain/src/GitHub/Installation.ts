@@ -1,19 +1,13 @@
-import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
-import * as Model from "effect/unstable/schema/Model"
-import { lifecycleTimestamps } from "../Shared/Timestamps.ts"
 import {
-  GitHubAccountDatabaseId,
   GitHubAccountDatabaseIdFromStringOrNumber,
-  GitHubInstallationId,
   GitHubInstallationIdFromStringOrNumber,
-  GitHubRepositoryDatabaseId,
   GitHubRepositoryDatabaseIdFromStringOrNumber,
   GitHubRepositoryNodeId,
   GitHubUserDatabaseIdFromStringOrNumber,
 } from "./Id.ts"
-import { GitHubRepositoryFullName, GitHubRepositoryFullNameFromString } from "./Repository.ts"
+import { GitHubRepositoryFullNameFromString } from "./Repository.ts"
 const GitHubRepositoryCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).annotate({
   identifier: "GitHubRepositoryCount",
 })
@@ -28,35 +22,6 @@ export const GitHubInstallationRepositorySelection = Schema.Literals(["all", "se
 })
 export type GitHubInstallationRepositorySelection =
   typeof GitHubInstallationRepositorySelection.Type
-
-export const GitHubInstallationStatus = Schema.Literals(["active", "suspended"]).annotate({
-  identifier: "GitHubInstallationStatus",
-})
-export type GitHubInstallationStatus = typeof GitHubInstallationStatus.Type
-
-export const GitHubInstallationSyncStatus = Schema.Literals([
-  "pending",
-  "ready",
-  "failed",
-]).annotate({
-  identifier: "GitHubInstallationSyncStatus",
-})
-export type GitHubInstallationSyncStatus = typeof GitHubInstallationSyncStatus.Type
-
-export class GitHubInstallation extends Model.Class<GitHubInstallation>("GitHubInstallation")({
-  githubDatabaseId: Model.GeneratedByApp(GitHubInstallationId),
-  accountDatabaseId: GitHubAccountDatabaseId,
-  accountHandle: Schema.NonEmptyString,
-  accountType: GitHubAccountType,
-  repositorySelection: GitHubInstallationRepositorySelection,
-  status: GitHubInstallationStatus,
-  syncStatus: GitHubInstallationSyncStatus,
-  htmlUrl: Schema.NonEmptyString,
-  lastError: Schema.OptionFromNullOr(Schema.String).pipe(
-    Schema.withConstructorDefault(Effect.succeedNone),
-  ),
-  ...lifecycleTimestamps,
-}) {}
 
 const GitHubInstallationUserOrOrganizationAccount = Schema.Struct({
   id: GitHubAccountDatabaseIdFromStringOrNumber,
@@ -106,15 +71,6 @@ export const GitHubInstallationSummary = Schema.Struct({
   )
   .annotate({ identifier: "GitHubInstallationSummary" })
 export type GitHubInstallationSummary = typeof GitHubInstallationSummary.Type
-
-export const GitHubDiscoveredRepository = Schema.Struct({
-  githubDatabaseId: GitHubRepositoryDatabaseId,
-  githubNodeId: GitHubRepositoryNodeId,
-  owner: GitHubRepositoryFullName.fields.owner,
-  repo: GitHubRepositoryFullName.fields.repo,
-  isPrivate: Schema.Boolean,
-}).annotate({ identifier: "GitHubDiscoveredRepository" })
-export type GitHubDiscoveredRepository = typeof GitHubDiscoveredRepository.Type
 
 export const GitHubInstallationRepository = Schema.Struct({
   id: GitHubRepositoryDatabaseIdFromStringOrNumber,

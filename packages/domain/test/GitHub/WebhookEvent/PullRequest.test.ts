@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
+import * as DateTime from "effect/DateTime"
 import { TestSchema } from "effect/testing"
 import {
   GitHubCommitSha,
@@ -15,6 +16,8 @@ import {
 import { GitHubWebhookEvent } from "@janitor/domain/GitHub/WebhookEvent"
 import { PullRequestWebhookPayload } from "@janitor/domain/GitHub/WebhookEvent/PullRequest"
 
+const updatedAt = "2026-09-02T12:00:00.000Z"
+
 const payload = {
   number: 42,
   pull_request: {
@@ -23,7 +26,11 @@ const payload = {
     node_id: "PR_kwDOExample",
     title: "Fix repository cleanup",
     body: null,
+    state: "open" as const,
     draft: false,
+    merged: false,
+    updated_at: updatedAt,
+    labels: [{ id: 202, node_id: "LA_kwDOExample", name: "bug" }],
     user: { id: 102, login: "octocat" },
     head: { sha: "a".repeat(40) },
     base: { ref: "main" },
@@ -45,7 +52,17 @@ const openedPayload: PullRequestWebhookPayload = {
     nodeId: GitHubPullRequestNodeId.make("PR_kwDOExample"),
     title: "Fix repository cleanup",
     body: null,
+    state: "open",
     draft: false,
+    merged: false,
+    updatedAt: DateTime.makeUnsafe(updatedAt),
+    labels: [
+      {
+        id: GitHubLabelDatabaseId.make("202"),
+        nodeId: GitHubLabelNodeId.make("LA_kwDOExample"),
+        name: "bug",
+      },
+    ],
     user: { id: GitHubUserDatabaseId.make("102"), login: "octocat" },
     head: { sha: GitHubCommitSha.make("a".repeat(40)) },
     base: { ref: "main" },
@@ -108,6 +125,7 @@ describe("pull request webhook payload schema", () => {
   it("declares every supported action", () => {
     assert.deepStrictEqual(PullRequestWebhookPayload.discriminants, [
       "opened",
+      "closed",
       "reopened",
       "synchronize",
       "edited",
@@ -173,11 +191,28 @@ describe("pull request webhook payload schema", () => {
     )
   })
 
+  it("decodes a closed and merged payload", async () => {
+    const decoding = new TestSchema.Asserts(PullRequestWebhookPayload).decoding()
+
+    await decoding.succeed(
+      {
+        ...payload,
+        action: "closed",
+        pull_request: { ...payload.pull_request, state: "closed" as const, merged: true },
+      },
+      {
+        ...openedPayload,
+        action: "closed",
+        pullRequest: { ...openedPayload.pullRequest, state: "closed", merged: true },
+      },
+    )
+  })
+
   it("rejects unsupported actions with a useful message", async () => {
     const decoding = new TestSchema.Asserts(PullRequestWebhookPayload).decoding()
 
     await decoding.fail(
-      { ...payload, action: "closed" },
+      { ...payload, action: "assigned" },
       "Unsupported or malformed pull request webhook action",
     )
   })

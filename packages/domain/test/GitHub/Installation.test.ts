@@ -1,6 +1,5 @@
 import { describe, it } from "@effect/vitest"
 import * as DateTime from "effect/DateTime"
-import * as Option from "effect/Option"
 import { TestSchema } from "effect/testing"
 import {
   GitHubAccountDatabaseId,
@@ -14,7 +13,6 @@ import {
   GitHubInstallationRepositoriesResponse,
   GitHubInstallationRepository,
   GitHubInstallationSummary,
-  GitHubInstallation,
 } from "@janitor/domain/GitHub/Installation"
 
 describe("GitHub installation schemas", () => {
@@ -199,43 +197,5 @@ describe("GitHub installation schemas", () => {
     const making = new TestSchema.Asserts(GitHubInstallationSummary).make()
 
     await making.fail(null, "Expected GitHubInstallationSummary")
-  })
-
-  it("decodes a Postgres installation row", async () => {
-    const decoding = new TestSchema.Asserts(GitHubInstallation).decoding()
-    const createdAt = 1_725_000_000_000
-    const updatedAt = 1_725_000_100_000
-    const deletedAt = 1_725_000_200_000
-
-    await decoding.succeed(
-      {
-        githubDatabaseId: "123",
-        accountDatabaseId: "456",
-        accountHandle: "effect",
-        accountType: "Organization",
-        repositorySelection: "selected",
-        status: "active",
-        syncStatus: "ready",
-        htmlUrl: "https://github.com/settings/installations/123",
-        lastError: null,
-        createdAt,
-        updatedAt,
-        deletedAt,
-      },
-      GitHubInstallation.make({
-        githubDatabaseId: GitHubInstallationId.make("123"),
-        accountDatabaseId: GitHubAccountDatabaseId.make("456"),
-        accountHandle: "effect",
-        accountType: "Organization",
-        repositorySelection: "selected",
-        status: "active",
-        syncStatus: "ready",
-        htmlUrl: "https://github.com/settings/installations/123",
-        lastError: Option.none(),
-        createdAt: DateTime.makeUnsafe(createdAt),
-        updatedAt: DateTime.makeUnsafe(updatedAt),
-        deletedAt: Option.some(DateTime.makeUnsafe(deletedAt)),
-      }),
-    )
   })
 })

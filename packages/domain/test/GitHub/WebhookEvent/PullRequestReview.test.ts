@@ -17,6 +17,7 @@ import { GitHubWebhookEvent } from "@janitor/domain/GitHub/WebhookEvent"
 import { PullRequestReviewWebhookPayload } from "@janitor/domain/GitHub/WebhookEvent/PullRequestReview"
 
 const submittedAt = "2026-08-28T12:00:00.000Z"
+const updatedAt = "2026-08-28T11:00:00.000Z"
 const payload = {
   pull_request: {
     id: 123,
@@ -24,7 +25,11 @@ const payload = {
     node_id: "PR_kwDOExample",
     title: "Fix repository cleanup",
     body: null,
+    state: "open",
     draft: false,
+    merged: false,
+    updated_at: updatedAt,
+    labels: [],
     user: { id: 102, login: "octocat" },
     head: { sha: "a".repeat(40) },
     base: { ref: "main" },
@@ -51,7 +56,11 @@ const submittedPayload: PullRequestReviewWebhookPayload = {
     nodeId: GitHubPullRequestNodeId.make("PR_kwDOExample"),
     title: "Fix repository cleanup",
     body: null,
+    state: "open",
     draft: false,
+    merged: false,
+    updatedAt: DateTime.makeUnsafe(updatedAt),
+    labels: [],
     user: { id: GitHubUserDatabaseId.make("102"), login: "octocat" },
     head: { sha: GitHubCommitSha.make("a".repeat(40)) },
     base: { ref: "main" },
