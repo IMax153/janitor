@@ -42,9 +42,10 @@ const acceptedResponse = HttpServerResponse.text("Accepted", {
 const invalidWebhookSignatureResponse = HttpServerResponse.text("Invalid Webhook Signature", {
   status: 401,
 })
-const payloadTooLargeResponse = HttpServerResponse.text("Payload Too Large", {
-  status: 413,
-})
+// GitHub only needs to know a delivery arrived. Deliveries Janitor chooses not
+// to process are acknowledged and dropped; only failures to process a
+// delivery Janitor would otherwise accept return a non-2xx status.
+const droppedResponse = acceptedResponse
 const serviceUnavailableResponse = HttpServerResponse.text("Service Unavailable", {
   status: 503,
   headers: { "Retry-After": "60" },
@@ -130,11 +131,20 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
           ),
         )
 
+        const deliveryId = headers["x-github-delivery"]
+        const eventName = headers["x-github-event"]
+
+        const drop = (reason: string) =>
+          Effect.logInfo("Dropped GitHub webhook delivery", reason).pipe(
+            Effect.annotateLogs({ id: deliveryId, event: eventName }),
+            Effect.as(droppedResponse),
+          )
+
         if (
           headers["content-length"] !== undefined &&
           headers["content-length"] > MAX_GITHUB_WEBHOOK_BODY_BYTES
         ) {
-          return payloadTooLargeResponse
+          return yield* drop("Declared body exceeds the size limit")
         }
 
         const body = yield* readBodyBounded(request).pipe(
@@ -152,7 +162,7 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
         )
 
         if (body === undefined) {
-          return payloadTooLargeResponse
+          return yield* drop("Body exceeds the size limit")
         }
 
         const hasValidSignature = yield* verifier.verify(headers["x-hub-signature-256"], body)
@@ -167,20 +177,11 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
         )
 
         if (!isJson) {
-          return yield* new HttpServerError.RequestParseError({
-            request,
-            description: "Invalid JSON payload",
-          })
+          return yield* drop("Body is not JSON")
         }
 
-        const deliveryId = headers["x-github-delivery"]
-        const eventName = headers["x-github-event"]
-
         if (!isSupportedEventName(eventName)) {
-          yield* Effect.logDebug("Ignored GitHub webhook with unsupported event name").pipe(
-            Effect.annotateLogs({ id: deliveryId, event: eventName }),
-          )
-          return acceptedResponse
+          return yield* drop("Unsupported event name")
         }
 
         const payloadSha256 = yield* sha256Hex(body)

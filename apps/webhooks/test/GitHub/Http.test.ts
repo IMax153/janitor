@@ -230,19 +230,19 @@ describe("GitHubWebhookRoutes", () => {
     }),
   )
 
-  it.effect("rejects a non-JSON body after signature verification", () =>
+  it.effect("drops a non-JSON body with 202 after signature verification", () =>
     Effect.gen(function* () {
       let calls = 0
       const handler = yield* makeHandler(() => Effect.sync(() => void calls++))
 
       const response = yield* post(handler, { headers: headers(), body: "not json" })
 
-      assert.strictEqual(response.status, 400)
+      assert.strictEqual(response.status, 202)
       assert.strictEqual(calls, 0)
     }),
   )
 
-  it.effect("rejects a declared oversized body with 413", () =>
+  it.effect("drops a declared oversized body with 202", () =>
     Effect.gen(function* () {
       let calls = 0
       const handler = yield* makeHandler(() => Effect.sync(() => void calls++))
@@ -252,12 +252,12 @@ describe("GitHubWebhookRoutes", () => {
         body: "{}",
       })
 
-      assert.strictEqual(response.status, 413)
+      assert.strictEqual(response.status, 202)
       assert.strictEqual(calls, 0)
     }),
   )
 
-  it.effect("rejects an oversized body by actual bytes when Content-Length is absent", () =>
+  it.effect("drops an oversized body by actual bytes when Content-Length is absent", () =>
     Effect.gen(function* () {
       let calls = 0
       const handler = yield* makeHandler(() => Effect.sync(() => void calls++))
@@ -265,12 +265,12 @@ describe("GitHubWebhookRoutes", () => {
 
       const response = yield* post(handler, { headers: headers(), body })
 
-      assert.strictEqual(response.status, 413)
+      assert.strictEqual(response.status, 202)
       assert.strictEqual(calls, 0)
     }),
   )
 
-  it.effect("rejects an oversized body by actual bytes when Content-Length lies", () =>
+  it.effect("drops an oversized body by actual bytes when Content-Length lies", () =>
     Effect.gen(function* () {
       let calls = 0
       const handler = yield* makeHandler(() => Effect.sync(() => void calls++))
@@ -281,7 +281,7 @@ describe("GitHubWebhookRoutes", () => {
         body,
       })
 
-      assert.strictEqual(response.status, 413)
+      assert.strictEqual(response.status, 202)
       assert.strictEqual(calls, 0)
     }),
   )
