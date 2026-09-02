@@ -18,6 +18,7 @@ catalog:
   "@foldkit/vite-plugin": ^0.18.0
   "@fontsource-variable/geist": ^5.3.0
   "@tailwindcss/vite": ^4.3.3
+  "@testcontainers/postgresql": 12.1.0
   "@types/node": ^24.13.3
   alchemy: 2.0.0-beta.75
   clsx: ^2.1.1
@@ -44,9 +45,12 @@ peerDependencyRules:
     vite: "*"
 
 allowBuilds:
+  cpu-features: set this to true or false
   esbuild: false
   msgpackr-extract: false
+  protobufjs: set this to true or false
   sharp: false
+  ssh2: set this to true or false
   workerd: true
 
 minimumReleaseAgeExclude:

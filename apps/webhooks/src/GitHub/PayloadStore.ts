@@ -48,18 +48,21 @@ export class GitHubPayloadStore extends Context.Service<
 export const payloadKey = (deliveryId: GitHubWebhookDeliveryId): GitHubWebhookR2ObjectKey =>
   GitHubWebhookR2ObjectKey.make(`${PAYLOAD_KEY_PREFIX}${deliveryId}`)
 
-const make = Effect.gen(function* () {
-  const bucket = yield* Cloudflare.R2.Bucket("GitHubWebhookPayloads", {
-    lifecycleRules: [
-      {
-        id: "expire-webhook-payloads",
-        prefix: PAYLOAD_KEY_PREFIX,
-        deleteObjectsTransition: {
-          condition: { type: "Age", maxAge: GITHUB_WEBHOOK_PAYLOAD_RETENTION_SECONDS },
-        },
+/** Encrypted overflow payloads referenced by queue envelopes. */
+export const GitHubWebhookPayloadsBucket = Cloudflare.R2.Bucket("GitHubWebhookPayloads", {
+  lifecycleRules: [
+    {
+      id: "expire-webhook-payloads",
+      prefix: PAYLOAD_KEY_PREFIX,
+      deleteObjectsTransition: {
+        condition: { type: "Age", maxAge: GITHUB_WEBHOOK_PAYLOAD_RETENTION_SECONDS },
       },
-    ],
-  })
+    },
+  ],
+})
+
+const make = Effect.gen(function* () {
+  const bucket = yield* GitHubWebhookPayloadsBucket
   const client = yield* Cloudflare.R2.WriteBucket(bucket)
 
   const put = Effect.fn("GitHubPayloadStore.put")(function* ({

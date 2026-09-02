@@ -5,9 +5,17 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
+import { GitHubEventsDeadLetterQueue, GitHubEventsQueue } from "@janitor/webhooks/GitHub/EventQueue"
+import { GitHubWebhookPayloadsBucket } from "@janitor/webhooks/GitHub/PayloadStore"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { TopologyProbeHyperdrive } from "./Database.ts"
+import {
+  GitHubEventsDeadLetter,
+  GitHubPayloadReader,
+  handleMessage,
+} from "./GitHub/WebhookConsumer.ts"
+import { GitHubWebhookJournal } from "./GitHub/WebhookJournal.ts"
 import { MigrationProbe } from "./MigrationProbe.ts"
 import { TopologyProbe, TopologyProbePayload, TopologyProbeLayer } from "./TopologyProbe.ts"
 import { TopologyProbeCronLayer, TopologyProbeCronName } from "./TopologyProbeCron.ts"
@@ -25,12 +33,27 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
     const queueResource = yield* TopologyProbeQueue
     const queue = yield* Cloudflare.Queues.WriteQueue(queueResource)
 
+    const githubEventsQueue = yield* GitHubEventsQueue
+    const githubDeadLetterQueue = yield* Cloudflare.Queues.WriteQueue(
+      yield* GitHubEventsDeadLetterQueue,
+    )
+    const githubPayloadsBucket = yield* Cloudflare.R2.ReadWriteBucket(
+      yield* GitHubWebhookPayloadsBucket,
+    )
+
     const DatabaseLayer = Postgres.PostgresLayer({
       url: hyperdrive.connectionString,
     })
 
     const ClusterLayer = Layer.mergeAll(TopologyProbeLayer, TopologyProbeCronLayer).pipe(
-      Layer.provideMerge(TopologyProbeStore.layer),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          TopologyProbeStore.layer,
+          GitHubWebhookJournal.layer,
+          GitHubPayloadReader.fromBucket(githubPayloadsBucket),
+          GitHubEventsDeadLetter.fromQueue(githubDeadLetterQueue),
+        ),
+      ),
       Layer.provide(DatabaseLayer),
     )
 
@@ -41,6 +64,26 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
     const migrationProbe = yield* MigrationProbe
 
     yield* Cloudflare.Workers.cron("* * * * *", cluster.wake(TopologyProbeCronName))
+
+    yield* Cloudflare.Queues.consumeQueueMessages(
+      githubEventsQueue,
+      { batchSize: 10, maxRetries: 10, retryDelay: "1 minute" },
+      (messages) =>
+        cluster.provide(
+          Stream.runForEach(messages, (message) =>
+            handleMessage(message).pipe(
+              Effect.catchCause(
+                Effect.fnUntraced(function* (cause) {
+                  yield* Effect.logError("GitHub webhook consumer defect", cause).pipe(
+                    Effect.annotateLogs({ messageId: message.id }),
+                  )
+                  message.retry()
+                }),
+              ),
+            ),
+          ),
+        ),
+    )
 
     yield* Cloudflare.Queues.consumeQueueMessages(queueResource, (messages) =>
       cluster.provide(
@@ -141,6 +184,7 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       Cloudflare.Hyperdrive.ConnectBinding,
       Cloudflare.Queues.WriteQueueBinding,
       Cloudflare.Queues.EventSourceLive,
+      Cloudflare.R2.ReadWriteBucketBinding,
       Cloudflare.Workers.CronEventSourceLive,
     ]),
   ),

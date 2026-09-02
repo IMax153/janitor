@@ -8,6 +8,12 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 
+/** Signed, encrypted webhook envelopes awaiting the journal consumer. */
+export const GitHubEventsQueue = Cloudflare.Queues.Queue("GitHubEventsQueue")
+
+/** Envelopes the consumer could not journal, with content-safe diagnostics. */
+export const GitHubEventsDeadLetterQueue = Cloudflare.Queues.Queue("GitHubEventsDeadLetterQueue")
+
 export class EnqueueError extends Data.TaggedError("EnqueueError")<{
   readonly deliveryId: GitHubWebhookDeliveryId
   readonly cause: unknown
@@ -23,7 +29,7 @@ export class GitHubEventQueue extends Context.Service<
 >()("@janitor/webhooks/GitHub/EventQueue/GitHubEventQueue") {}
 
 const make = Effect.gen(function* () {
-  const resource = yield* Cloudflare.Queues.Queue("GitHubEventsQueue")
+  const resource = yield* GitHubEventsQueue
   const queue = yield* Cloudflare.Queues.WriteQueue(resource)
 
   const encodeEnvelope = Schema.encodeEffect(GitHubWebhookEnvelopeV1)
