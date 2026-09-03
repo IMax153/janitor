@@ -23,6 +23,7 @@ catalog:
   alchemy: 2.0.0-beta.75
   clsx: ^2.1.1
   effect: 4.0.0-rc.112
+  happy-dom: ^20.0.0
   foldkit: ^0.152.0
   lucide: ^1.33.0
   tailwind-merge: ^3.6.0
