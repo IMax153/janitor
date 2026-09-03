@@ -2,7 +2,14 @@
 
 ## Status
 
-Proposed on 2026-09-03. Supersedes the flat predicate rule from commits `f673573` through `4cd6f71` and the uncommitted rules editor. The synchronization design and the snapshot handoff stand as they are.
+Delivered on 2026-09-03 in six commits, `6f2dfbf` through `9b18b69`, on the `cluster` branch. Supersedes the flat predicate rule from commits `f673573` through `4cd6f71`. The synchronization design and the snapshot handoff stand as they are.
+
+Deviations from the plan as written:
+
+- Collection facts are fetched per entity by the entity refresh, not by repository tracks. A revision that reads them asks every open pull request to refresh, and its facts evaluate unknown until that refresh verifies. Check and review webhooks are not projected yet, so those facts refresh with the pull request and on repair.
+- The classifier provider is the OpenAI-compatible client with `gpt-5.6-luna` as the default model, read from `OPENAI_API_KEY`, `OPENAI_API_URL`, and `LABELING_AI_MODEL`. Without a key every classifier evaluates unknown.
+- Consent, leases, the decision cache, and draining live in the cluster app; the repair cron settles draining consent once its leases expire.
+- Label mutation uses the REST label endpoints by name rather than GraphQL node ids, because the read model does not always hold node ids for entities first seen through webhooks.
 
 ## What we take from slopcop
 
