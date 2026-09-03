@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import { GitHubLabelDatabaseId, GitHubRepositoryDatabaseId } from "../GitHub/Id.ts"
 import { GitHubEntityKind, GitHubLabelAvailability } from "../GitHub/ReadModel.ts"
@@ -74,6 +75,44 @@ export const RuleEvaluator = Schema.Union([ConcreteEvaluator]).annotate({
 })
 export type RuleEvaluator = typeof RuleEvaluator.Type
 
+/** What a matching rule does with its labels. */
+export const MatchAction = Schema.Literals(["add", "remove"]).annotate({
+  identifier: "MatchAction",
+})
+export type MatchAction = typeof MatchAction.Type
+
+/**
+ * What a rule does with its labels when it stops matching an entity it
+ * applies to. `remove-if-applied` only undoes labels this system added;
+ * `remove` also strips labels a person added by hand.
+ */
+export const UnmatchAction = Schema.Literals(["keep", "remove-if-applied", "remove"]).annotate({
+  identifier: "UnmatchAction",
+})
+export type UnmatchAction = typeof UnmatchAction.Type
+
+/** How a ruleset settles two rules that disagree about one label. */
+export const ConflictPolicy = Schema.Literals([
+  "last-rule-wins",
+  "first-rule-wins",
+  "add-wins",
+  "remove-wins",
+]).annotate({ identifier: "ConflictPolicy" })
+export type ConflictPolicy = typeof ConflictPolicy.Type
+
+export const DEFAULT_MATCH_ACTION: MatchAction = "add"
+export const DEFAULT_UNMATCH_ACTION: UnmatchAction = "remove-if-applied"
+export const DEFAULT_CONFLICT_POLICY: ConflictPolicy = "last-rule-wins"
+
+const defaulted = <S extends Schema.Top & Schema.WithoutConstructorDefault>(
+  schema: S,
+  value: S["Encoded"],
+) => schema.pipe(Schema.withDecodingDefaultKey(Effect.succeed(value)))
+
+/**
+ * Every behaviour choice is a per-rule setting so the editor can expose it.
+ * Settings added after a revision was saved decode with their defaults.
+ */
 export const Rule = Schema.Struct({
   id: RuleId,
   name: RuleName,
@@ -84,15 +123,20 @@ export const Rule = Schema.Struct({
     Schema.isUnique(),
     Schema.isMaxLength(MAX_LABELS_PER_RULE),
   ),
+  onMatch: defaulted(MatchAction, DEFAULT_MATCH_ACTION),
+  onUnmatch: defaulted(UnmatchAction, DEFAULT_UNMATCH_ACTION),
+  /** Evaluated and planned, but never applied to GitHub. */
+  dryRun: defaulted(Schema.Boolean, false),
 }).annotate({ identifier: "Rule" })
 export type Rule = typeof Rule.Type
 
 export const Ruleset = Schema.Struct({
   rules: Schema.Array(Rule).check(Schema.isMaxLength(MAX_RULES_PER_RULESET)),
+  conflicts: defaulted(ConflictPolicy, DEFAULT_CONFLICT_POLICY),
 }).annotate({ identifier: "Ruleset" })
 export type Ruleset = typeof Ruleset.Type
 
-export const emptyRuleset: Ruleset = { rules: [] }
+export const emptyRuleset: Ruleset = { rules: [], conflicts: DEFAULT_CONFLICT_POLICY }
 
 /** Monotonic per repository. Zero means nothing has been saved yet. */
 export const RulesetRevision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))

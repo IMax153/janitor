@@ -25,6 +25,9 @@ const rule = (overrides: Partial<Rule> = {}): Rule => ({
   target: "pull_request",
   evaluator: { _tag: "Concrete", predicates: [{ _tag: "BaseBranchIs", ref: "main" }] },
   labels: [bug],
+  onMatch: "add",
+  onUnmatch: "remove-if-applied",
+  dryRun: false,
   ...overrides,
 })
 
@@ -33,7 +36,7 @@ const decodeRuleset = Schema.decodeUnknownEffect(Ruleset)
 describe("Ruleset", () => {
   it.effect("round-trips a ruleset through JSON", () =>
     Effect.gen(function* () {
-      const ruleset: Ruleset = { rules: [rule()] }
+      const ruleset: Ruleset = { rules: [rule()], conflicts: "last-rule-wins" }
       const json = yield* Schema.encodeEffect(Schema.fromJsonString(Ruleset))(ruleset)
       const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Ruleset))(json)
       assert.deepStrictEqual(decoded, ruleset)
@@ -63,6 +66,7 @@ describe("Ruleset", () => {
   it("reports duplicate ids, unresolved or deleted labels, and incompatible predicates", () => {
     const issues = validateRuleset(
       {
+        conflicts: "last-rule-wins",
         rules: [
           rule(),
           rule({ labels: [GitHubLabelDatabaseId.make("99")] }),
@@ -91,6 +95,7 @@ describe("Ruleset", () => {
     assert.deepStrictEqual(
       validateRuleset(
         {
+          conflicts: "last-rule-wins",
           rules: [
             rule(),
             rule({
@@ -113,15 +118,19 @@ describe("Ruleset", () => {
   })
 
   it("derives the tracks a ruleset needs from its enabled rules", () => {
-    assert.deepStrictEqual(requiredTracks({ rules: [] }), [])
-    assert.deepStrictEqual(requiredTracks({ rules: [rule({ enabled: false })] }), [])
-    assert.deepStrictEqual(requiredTracks({ rules: [rule()] }), [
+    assert.deepStrictEqual(requiredTracks({ rules: [], conflicts: "last-rule-wins" }), [])
+    assert.deepStrictEqual(
+      requiredTracks({ rules: [rule({ enabled: false })], conflicts: "last-rule-wins" }),
+      [],
+    )
+    assert.deepStrictEqual(requiredTracks({ rules: [rule()], conflicts: "last-rule-wins" }), [
       "labels",
       "entities",
       "pull_requests",
     ])
     assert.deepStrictEqual(
       requiredTracks({
+        conflicts: "last-rule-wins",
         rules: [
           rule({
             target: "issue",

@@ -3,6 +3,7 @@ import { GitHubRepositoryDatabaseId } from "../GitHub/Id.ts"
 import { GitHubRepositoryAccess } from "../GitHub/ReadModel.ts"
 import { SyncGeneration } from "../GitHub/Sync.ts"
 import { GitHubWebhookJournalSequence } from "../GitHub/WebhookJournal.ts"
+import { Plan } from "./Evaluation.ts"
 import { RulesetRevision } from "./Ruleset.ts"
 
 /**
@@ -42,6 +43,8 @@ export const ReconciliationRecord = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   outcome: Schema.NullOr(ReconciliationOutcome),
   detail: Schema.NullOr(Schema.String),
+  /** Present once the outcome is `evaluated`. Nothing is applied yet. */
+  plan: Schema.NullOr(Plan),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
 }).annotate({ identifier: "ReconciliationRecord" })
 export type ReconciliationRecord = typeof ReconciliationRecord.Type

@@ -21,7 +21,7 @@ const repositoryId = GitHubRepositoryDatabaseId.make("701")
 const view: RulesetView = {
   repositoryId,
   configuredRevision: RulesetRevision.make(1),
-  configured: { rules: [] },
+  configured: { rules: [], conflicts: "last-rule-wins" },
   activeRevision: null,
   pendingTracks: [],
   labels: [],
@@ -59,7 +59,8 @@ const overview: LabelingOverview["Service"] = {
               fingerprint: "a".repeat(64),
               createdAt: DateTime.makeUnsafe("2026-09-03T14:40:25.000Z"),
               outcome: "evaluated",
-              detail: "no rules evaluated yet",
+              detail: "no changes (0 rules matched)",
+              plan: { actions: [], matched: [], conflicts: [] },
               completedAt: DateTime.makeUnsafe("2026-09-03T14:40:26.000Z"),
             },
           ]

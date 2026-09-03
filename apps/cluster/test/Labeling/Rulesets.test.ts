@@ -40,6 +40,9 @@ const baseMain: Rule = {
   target: "pull_request",
   evaluator: { _tag: "Concrete", predicates: [{ _tag: "BaseBranchIs", ref: "main" }] },
   labels: [bug],
+  onMatch: "add",
+  onUnmatch: "remove-if-applied",
+  dryRun: false,
 }
 
 const seed = Effect.gen(function* () {
@@ -76,7 +79,7 @@ layer(RulesetsLayer, { timeout: "2 minutes" })("LabelingRulesets against Postgre
       const rulesets = yield* LabelingRulesets
       const view = yield* rulesets.load(repositoryId)
       assert.strictEqual(view.configuredRevision, 0)
-      assert.deepStrictEqual(view.configured, { rules: [] })
+      assert.deepStrictEqual(view.configured, { rules: [], conflicts: "last-rule-wins" })
       assert.isNull(view.activeRevision)
       assert.deepStrictEqual(view.labels, [
         { labelId: bug, name: "bug", availability: "available" },
@@ -95,7 +98,7 @@ layer(RulesetsLayer, { timeout: "2 minutes" })("LabelingRulesets against Postgre
       const first = yield* rulesets.save({
         repositoryId,
         expectedRevision: revision(0),
-        ruleset: { rules: [baseMain] },
+        ruleset: { rules: [baseMain], conflicts: "last-rule-wins" },
         author,
       })
       assert.strictEqual(first.configuredRevision, 1)
@@ -109,7 +112,7 @@ layer(RulesetsLayer, { timeout: "2 minutes" })("LabelingRulesets against Postgre
         rulesets.save({
           repositoryId,
           expectedRevision: revision(0),
-          ruleset: { rules: [] },
+          ruleset: { rules: [], conflicts: "last-rule-wins" },
           author,
         }),
       )
@@ -124,7 +127,15 @@ layer(RulesetsLayer, { timeout: "2 minutes" })("LabelingRulesets against Postgre
         rulesets.save({
           repositoryId,
           expectedRevision: revision(1),
-          ruleset: { rules: [{ ...baseMain, labels: [GitHubLabelDatabaseId.make("404")] }] },
+          ruleset: {
+            rules: [
+              {
+                ...baseMain,
+                labels: [GitHubLabelDatabaseId.make("404")],
+              },
+            ],
+            conflicts: "last-rule-wins",
+          },
           author,
         }),
       )
@@ -141,7 +152,7 @@ layer(RulesetsLayer, { timeout: "2 minutes" })("LabelingRulesets against Postgre
       const second = yield* rulesets.save({
         repositoryId,
         expectedRevision: revision(1),
-        ruleset: { rules: [{ ...baseMain, enabled: false }] },
+        ruleset: { rules: [{ ...baseMain, enabled: false }], conflicts: "last-rule-wins" },
         author,
       })
       assert.strictEqual(second.configuredRevision, 2)
@@ -160,7 +171,7 @@ layer(RulesetsLayer, { timeout: "2 minutes" })("LabelingRulesets against Postgre
       const saved = yield* rulesets.save({
         repositoryId,
         expectedRevision: revision(2),
-        ruleset: { rules: [baseMain] },
+        ruleset: { rules: [baseMain], conflicts: "last-rule-wins" },
         author,
       })
       assert.strictEqual(saved.configuredRevision, 3)

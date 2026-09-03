@@ -58,8 +58,33 @@ export const Rule = Schema.Struct({
   target: Schema.Literals(["issue", "pull_request"]),
   evaluator: Schema.TaggedStruct("Concrete", { predicates: Schema.Array(ConcretePredicate) }),
   labels: Schema.Array(Schema.String),
+  onMatch: Schema.Literals(["add", "remove"]),
+  onUnmatch: Schema.Literals(["keep", "remove-if-applied", "remove"]),
+  dryRun: Schema.Boolean,
 })
 export type Rule = typeof Rule.Type
+
+export const PlanAction = Schema.Struct({
+  labelId: Schema.String,
+  action: Schema.Literals(["add", "remove"]),
+  ruleId: Schema.String,
+  ruleName: Schema.String,
+  dryRun: Schema.Boolean,
+})
+export type PlanAction = typeof PlanAction.Type
+
+export const Plan = Schema.Struct({
+  actions: Schema.Array(PlanAction),
+  matched: Schema.Array(Schema.String),
+  conflicts: Schema.Array(
+    Schema.Struct({
+      labelId: Schema.String,
+      contenders: Schema.Array(Schema.String),
+      winner: Schema.String,
+    }),
+  ),
+})
+export type Plan = typeof Plan.Type
 
 export const SynchronizedLabel = Schema.Struct({
   labelId: Schema.String,
@@ -79,7 +104,10 @@ export const SyncFreshness = Schema.Literals([
 export const RulesetView = Schema.Struct({
   repositoryId: Schema.String,
   configuredRevision: Schema.Int,
-  configured: Schema.Struct({ rules: Schema.Array(Rule) }),
+  configured: Schema.Struct({
+    rules: Schema.Array(Rule),
+    conflicts: Schema.Literals(["last-rule-wins", "first-rule-wins", "add-wins", "remove-wins"]),
+  }),
   activeRevision: Schema.NullOr(Schema.Int),
   pendingTracks: Schema.Array(Schema.String),
   labels: Schema.Array(SynchronizedLabel),
@@ -97,6 +125,7 @@ export const ReconciliationRecord = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   outcome: Schema.NullOr(Schema.Literals(["evaluated", "superseded", "not-qualified", "failed"])),
   detail: Schema.NullOr(Schema.String),
+  plan: Schema.NullOr(Plan),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
 })
 export type ReconciliationRecord = typeof ReconciliationRecord.Type
@@ -280,6 +309,31 @@ export const describePredicate = (predicate: ConcretePredicate): string => {
   }
 }
 
+/** How a rule behaves, for the rule card. */
+export const describeBehaviour = (rule: Rule): string => {
+  const unmatch =
+    rule.onUnmatch === "keep"
+      ? "keeps them otherwise"
+      : rule.onUnmatch === "remove"
+        ? "removes them otherwise"
+        : "removes them otherwise if it added them"
+  const base = `${rule.onMatch === "add" ? "adds" : "removes"} labels when matched, ${unmatch}`
+  return rule.dryRun ? `${base}, dry run` : base
+}
+
+/** One line per planned change, with label IDs resolved to names. */
+export const describePlan = (
+  plan: Plan,
+  labels: ReadonlyArray<SynchronizedLabel>,
+): ReadonlyArray<string> => {
+  const name = (labelId: string) =>
+    labels.find((label) => label.labelId === labelId)?.name ?? labelId
+  return plan.actions.map(
+    (action) =>
+      `${action.action} ${name(action.labelId)} (${action.ruleName}${action.dryRun ? ", dry run" : ""})`,
+  )
+}
+
 /** One line of status for the configured revision. */
 export const describeRevision = (view: RulesetView): string => {
   if (view.configuredRevision === 0) return "No rules saved"
@@ -376,6 +430,7 @@ const rulesSection = (h: HtmlBuilder<Message>, view: RulesetView): Html =>
                         .join(" and ")}`,
                     ],
                   ),
+                  h.div([h.Class("text-muted-foreground text-xs")], [describeBehaviour(rule)]),
                   h.div(
                     [h.Class("mt-2 flex flex-wrap gap-1")],
                     rule.labels.map((labelId) =>
@@ -416,9 +471,27 @@ const labelsSection = (h: HtmlBuilder<Message>, view: RulesetView): Html =>
     ],
   )
 
+const planCell = (
+  h: HtmlBuilder<Message>,
+  row: ReconciliationRecord,
+  labels: ReadonlyArray<SynchronizedLabel>,
+): Html => {
+  if (row.plan === null) return h.span([h.Class("text-muted-foreground")], [""])
+  const lines = describePlan(row.plan, labels)
+  return lines.length === 0
+    ? h.span([h.Class("text-muted-foreground")], ["no changes"])
+    : h.ul(
+        [h.Class("flex flex-col gap-0.5")],
+        lines.map((line, index) =>
+          h.li([h.DataAttribute("action", row.plan?.actions[index]?.action ?? "")], [line]),
+        ),
+      )
+}
+
 const reconciliationsSection = (
   h: HtmlBuilder<Message>,
   reconciliations: ReadonlyArray<ReconciliationRecord>,
+  labels: ReadonlyArray<SynchronizedLabel>,
 ): Html =>
   h.section(
     [h.Class("flex flex-col gap-2")],
@@ -439,7 +512,7 @@ const reconciliationsSection = (
                 [
                   h.tr(
                     [],
-                    ["#", "Snapshot", "Revision", "Outcome", "Detail", "When"].map((head) =>
+                    ["#", "Snapshot", "Revision", "Outcome", "Plan", "Detail", "When"].map((head) =>
                       h.th([h.Class("py-1 pr-3 font-medium")], [head]),
                     ),
                   ),
@@ -455,6 +528,7 @@ const reconciliationsSection = (
                       h.td([h.Class("py-1 pr-3")], [row.snapshotGeneration]),
                       h.td([h.Class("py-1 pr-3")], [String(row.rulesRevision)]),
                       h.td([h.Class("py-1 pr-3")], [row.outcome ?? "pending"]),
+                      h.td([h.Class("py-1 pr-3")], [planCell(h, row, labels)]),
                       h.td([h.Class("text-muted-foreground py-1 pr-3")], [row.detail ?? ""]),
                       h.td(
                         [h.Class("text-muted-foreground py-1 pr-3 whitespace-nowrap")],
@@ -490,7 +564,7 @@ const detailPanel = (h: HtmlBuilder<Message>, model: Model): Html =>
               }),
               rulesSection(h, detail.rules),
               labelsSection(h, detail.rules),
-              reconciliationsSection(h, detail.reconciliations),
+              reconciliationsSection(h, detail.reconciliations, detail.rules.labels),
             ],
           ),
       }),

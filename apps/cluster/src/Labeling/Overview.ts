@@ -7,6 +7,7 @@ import {
   ReconciliationOutcome,
   type RepositoryOverview,
 } from "@janitor/domain/Labeling/Reconciliation"
+import { Plan } from "@janitor/domain/Labeling/Evaluation"
 import { RulesetRevision } from "@janitor/domain/Labeling/Ruleset"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
@@ -43,6 +44,7 @@ const ReconciliationRow = Schema.Struct({
   created_at: Schema.DateTimeUtcFromDate,
   outcome: Schema.NullOr(ReconciliationOutcome),
   detail: Schema.NullOr(Schema.String),
+  plan: Schema.NullOr(Plan),
   completed_at: Schema.NullOr(Schema.DateTimeUtcFromDate),
 })
 
@@ -99,7 +101,7 @@ export class LabelingOverview extends Context.Service<
     ) {
       const rows = yield* sql`
         SELECT repository_id, number, snapshot_generation::text, rules_revision::text,
-               covered_sequence::text, fingerprint, created_at, outcome, detail, completed_at
+               covered_sequence::text, fingerprint, created_at, outcome, detail, plan, completed_at
         FROM labeling_reconciliation
         WHERE repository_id = ${repositoryId}
         ORDER BY created_at DESC
@@ -115,6 +117,7 @@ export class LabelingOverview extends Context.Service<
         createdAt: row.created_at,
         outcome: row.outcome,
         detail: row.detail,
+        plan: row.plan,
         completedAt: row.completed_at,
       }))
     })

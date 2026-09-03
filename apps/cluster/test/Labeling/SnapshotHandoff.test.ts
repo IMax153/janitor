@@ -1,4 +1,5 @@
 import { assert, layer } from "@effect/vitest"
+import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
@@ -6,9 +7,12 @@ import * as SqlClient from "effect/unstable/sql/SqlClient"
 import * as WorkflowEngine from "effect/unstable/workflow/WorkflowEngine"
 import {
   GitHubAccountDatabaseId,
+  GitHubCommitSha,
   GitHubInstallationId,
   GitHubLabelDatabaseId,
   GitHubLabelNodeId,
+  GitHubPullRequestDatabaseId,
+  GitHubPullRequestNodeId,
   GitHubRepositoryDatabaseId,
 } from "@janitor/domain/GitHub/Id"
 import { GitHubIssueApi } from "@janitor/domain/GitHub/Api"
@@ -53,6 +57,9 @@ const baseMain: Rule = {
   target: "pull_request",
   evaluator: { _tag: "Concrete", predicates: [{ _tag: "BaseBranchIs", ref: "main" }] },
   labels: [bug],
+  onMatch: "add",
+  onUnmatch: "remove-if-applied",
+  dryRun: false,
 }
 
 const seed = Effect.gen(function* () {
@@ -93,6 +100,21 @@ const seed = Effect.gen(function* () {
     pull_request: { url: "https://api.github.com/x" },
   })
   yield* readModel.applyIssue({ repositoryId, sequence: seq, issue })
+  yield* readModel.applyPullRequestDetails({
+    repositoryId,
+    sequence: seq,
+    pullRequest: {
+      id: GitHubPullRequestDatabaseId.make("2005"),
+      nodeId: GitHubPullRequestNodeId.make("PR_5"),
+      number,
+      state: "open",
+      draft: false,
+      mergedAt: null,
+      updatedAt: DateTime.makeUnsafe("2026-09-03T14:00:00.000Z"),
+      head: { sha: GitHubCommitSha.make("a".repeat(40)) },
+      base: { ref: "main" },
+    },
+  })
 })
 
 /** Verifies the entity scope once and returns the verified generation. */
@@ -146,7 +168,7 @@ layer(Services, { timeout: "2 minutes" })("SnapshotHandoff against Postgres", (i
       yield* rulesets.save({
         repositoryId,
         expectedRevision: RulesetRevision.make(0),
-        ruleset: { rules: [baseMain] },
+        ruleset: { rules: [baseMain], conflicts: "last-rule-wins" },
         author,
       })
       for (const track of ["labels", "entities", "pull_requests"] as const)
@@ -185,6 +207,21 @@ layer(Services, { timeout: "2 minutes" })("SnapshotHandoff against Postgres", (i
       assert.strictEqual(result.outcome, "evaluated")
       const done = yield* overview.reconciliations(repositoryId)
       assert.strictEqual(done[0]?.outcome, "evaluated")
+      assert.strictEqual(done[0]?.detail, "1 change planned")
+      // The tracer rule matches a pull request against main and plans the label.
+      assert.deepStrictEqual(done[0]?.plan, {
+        actions: [
+          {
+            labelId: bug,
+            action: "add",
+            ruleId: RuleId.make("base-main"),
+            ruleName: "Base is main",
+            dryRun: false,
+          },
+        ],
+        matched: [RuleId.make("base-main")],
+        conflicts: [],
+      })
       assert.isNotNull(done[0]?.completedAt)
 
       // Resubmitting the same identity returns the stored result: first

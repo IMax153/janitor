@@ -2,7 +2,8 @@ import {
   ReconciliationIdentity,
   ReconciliationOutcome,
 } from "@janitor/domain/Labeling/Reconciliation"
-import { RulesetRevision } from "@janitor/domain/Labeling/Ruleset"
+import { type EntitySnapshot, evaluate, Plan } from "@janitor/domain/Labeling/Evaluation"
+import { Ruleset, RulesetRevision } from "@janitor/domain/Labeling/Ruleset"
 import * as Data from "effect/Data"
 import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
@@ -11,6 +12,7 @@ import * as Schema from "effect/Schema"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
 import * as Activity from "effect/unstable/workflow/Activity"
 import * as Workflow from "effect/unstable/workflow/Workflow"
+import { GitHubReadModel } from "../GitHub/ReadModel.ts"
 import { describeError } from "../SqlErrors.ts"
 import { freshnessOf } from "../SyncFreshness.ts"
 import { SyncTargets } from "../SyncTargets.ts"
@@ -25,12 +27,13 @@ export class ReconcileActivityError extends Schema.TaggedError<ReconcileActivity
 export const ReconcileEntityResult = Schema.Struct({
   ...ReconciliationIdentity.fields,
   outcome: ReconciliationOutcome,
+  plan: Schema.NullOr(Plan),
 })
 
 /**
- * Reconciles one qualified snapshot (design: "Workflow activities"). This
- * slice loads and re-qualifies the snapshot and records the outcome; the
- * evaluation and plan activities follow.
+ * Reconciles one qualified snapshot (design: "Workflow activities"): loads
+ * and re-qualifies the snapshot, evaluates the revision's rules into a plan,
+ * and records both. Applying the plan to GitHub is not wired yet.
  */
 export const ReconcileEntity = Workflow.make(RECONCILE_ENTITY_TAG, {
   payload: ReconciliationIdentity,
@@ -41,7 +44,7 @@ export const ReconcileEntity = Workflow.make(RECONCILE_ENTITY_TAG, {
 })
 
 const QualifyResult = Schema.Union([
-  Schema.TaggedStruct("Qualified", {}),
+  Schema.TaggedStruct("Qualified", { plan: Plan }),
   Schema.TaggedStruct("Disqualified", {
     outcome: Schema.Literals(["superseded", "not-qualified"]),
     detail: Schema.String,
@@ -52,6 +55,15 @@ const ActiveRow = Schema.Struct({
   active_revision: Schema.NullOr(Schema.FiniteFromString.pipe(Schema.decodeTo(RulesetRevision))),
 })
 
+const RevisionRow = Schema.Struct({ ruleset: Ruleset })
+
+const encodePlan = Schema.encodeEffect(Schema.fromJsonString(Plan))
+
+const describePlan = (plan: Plan): string =>
+  plan.actions.length === 0
+    ? `no changes (${plan.matched.length} rule${plan.matched.length === 1 ? "" : "s"} matched)`
+    : `${plan.actions.length} change${plan.actions.length === 1 ? "" : "s"} planned`
+
 class QualifyFailure extends Data.TaggedError("QualifyFailure")<{ readonly message: string }> {}
 
 const failure = (message: string) => new ReconcileActivityError({ message })
@@ -61,12 +73,13 @@ export const ReconcileEntityLayer = ReconcileEntity.toLayer(
     const { repositoryId, number } = identity
 
     const qualified = yield* Activity.make({
-      name: "ReconcileEntity/Qualify",
+      name: "ReconcileEntity/Evaluate",
       success: QualifyResult,
       error: ReconcileActivityError,
       execute: Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
         const targets = yield* SyncTargets
+        const readModel = yield* GitHubReadModel
         const active = yield* sql`
           SELECT active_revision::text FROM labeling_repository_rules
           WHERE repository_id = ${repositoryId}
@@ -103,34 +116,86 @@ export const ReconcileEntityLayer = ReconcileEntity.toLayer(
             detail: `snapshot is ${freshness}`,
           }
         }
-        return { _tag: "Qualified" as const }
+
+        const revision = yield* sql`
+          SELECT ruleset FROM labeling_ruleset_revision
+          WHERE repository_id = ${repositoryId} AND revision = ${identity.rulesRevision}
+        `.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(RevisionRow))),
+          Effect.mapError((error) => new QualifyFailure({ message: describeError(error) })),
+        )
+        const ruleset = revision[0]?.ruleset
+        if (ruleset === undefined) {
+          return yield* new QualifyFailure({
+            message: `rules revision ${identity.rulesRevision} does not exist`,
+          })
+        }
+        const entity = yield* readModel
+          .getEntity(repositoryId, number)
+          .pipe(Effect.mapError((error) => new QualifyFailure({ message: error.message })))
+        if (Option.isNone(entity)) {
+          return {
+            _tag: "Disqualified" as const,
+            outcome: "not-qualified" as const,
+            detail: "entity is no longer in the read model",
+          }
+        }
+        const { entity: record, pullRequest, labels } = entity.value
+        const snapshot: EntitySnapshot = {
+          kind: record.kind,
+          title: record.title,
+          authorLogin: record.authorLogin,
+          state: record.state,
+          baseRef: Option.map(pullRequest, (pr) => pr.baseRef).pipe(Option.getOrNull),
+          draft: Option.map(pullRequest, (pr) => pr.draft).pipe(Option.getOrNull),
+          labels: labels.map((label) => label.labelId),
+        }
+        // Nothing has been applied to GitHub yet, so no label is owned.
+        const plan = evaluate({ ruleset, snapshot, applied: new Set() })
+        return { _tag: "Qualified" as const, plan }
       }).pipe(Effect.mapError((error) => failure(error.message))),
     })
 
     const outcome =
       qualified._tag === "Qualified"
-        ? { outcome: "evaluated" as const, detail: "no rules evaluated yet" }
-        : { outcome: qualified.outcome, detail: qualified.detail }
+        ? {
+            outcome: "evaluated" as const,
+            detail: describePlan(qualified.plan),
+            plan: qualified.plan,
+          }
+        : { outcome: qualified.outcome, detail: qualified.detail, plan: null }
 
     yield* Activity.make({
       name: `ReconcileEntity/Record/${outcome.outcome}`,
       error: ReconcileActivityError,
       execute: Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
+        const plan =
+          outcome.plan === null
+            ? null
+            : yield* encodePlan(outcome.plan).pipe(
+                Effect.mapError((error) => failure(describeError(error))),
+              )
         yield* sql`
           UPDATE labeling_reconciliation
-          SET outcome = ${outcome.outcome}, detail = ${outcome.detail}, completed_at = CLOCK_TIMESTAMP()
+          SET outcome = ${outcome.outcome}, detail = ${outcome.detail},
+              plan = ${plan}::jsonb, completed_at = CLOCK_TIMESTAMP()
           WHERE repository_id = ${repositoryId} AND number = ${number}
             AND snapshot_generation = ${identity.snapshotGeneration}
             AND rules_revision = ${identity.rulesRevision}
         `.pipe(Effect.mapError((error) => failure(describeError(error))))
         yield* Effect.logInfo("Reconciled entity snapshot").pipe(
-          Effect.annotateLogs({ repositoryId, number, ...outcome }),
+          Effect.annotateLogs({
+            repositoryId,
+            number,
+            outcome: outcome.outcome,
+            detail: outcome.detail,
+          }),
         )
       }),
     })
 
-    return { ...identity, outcome: outcome.outcome }
+    return { ...identity, outcome: outcome.outcome, plan: outcome.plan }
   }),
 )
 
