@@ -51,6 +51,10 @@ export const entityFacts = (view: EntityView): FactSnapshot =>
       draft: pr.draft,
       headSha: pr.headSha,
     })).pipe(Option.getOrNull),
+    ...Option.match(view.collections, {
+      onNone: () => ({}),
+      onSome: (collections) => ({ collections }),
+    }),
   })
 
 /**

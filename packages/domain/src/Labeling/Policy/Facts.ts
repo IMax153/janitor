@@ -102,10 +102,11 @@ export const FactCatalog: Readonly<Record<FactName, FactDefinition>> = {
     description: "Files changed by the pull request",
   },
   checks: {
-    type: { _tag: "Collection", fields: { name: "Text", state: "Text", required: "Flag" } },
+    type: { _tag: "Collection", fields: { name: "Text", state: "Text" } },
     kinds: pullRequest,
     track: "checks",
-    description: "Check runs on the head commit",
+    description:
+      "Check runs on the head commit; state is the conclusion, or the status while running",
   },
   reviews: {
     type: { _tag: "Collection", fields: { reviewer: "Text", state: "Text" } },
@@ -161,6 +162,12 @@ export interface EntityFields {
     readonly draft: boolean
     readonly headSha: string
   } | null
+  /** Present once an entity refresh fetched them; absent facts evaluate unknown. */
+  readonly collections?: {
+    readonly files: ReadonlyArray<{ readonly path: string; readonly status: string }>
+    readonly checks: ReadonlyArray<{ readonly name: string; readonly state: string }>
+    readonly reviews: ReadonlyArray<{ readonly reviewer: string; readonly state: string }>
+  }
 }
 
 /** Builds the facts the read model can supply; collection facts stay absent until their tracks exist. */
@@ -176,6 +183,23 @@ export const snapshotFacts = (entity: EntityFields): FactSnapshot => {
     facts.draft = { _tag: "Flag", value: entity.pullRequest.draft }
     facts.baseRef = { _tag: "Text", value: entity.pullRequest.baseRef }
     facts.headSha = { _tag: "Text", value: entity.pullRequest.headSha }
+  }
+  if (entity.collections !== undefined) {
+    facts.changedFiles = {
+      _tag: "Collection",
+      value: entity.collections.files.map((file) => ({ path: file.path, status: file.status })),
+    }
+    facts.checks = {
+      _tag: "Collection",
+      value: entity.collections.checks.map((check) => ({ name: check.name, state: check.state })),
+    }
+    facts.reviews = {
+      _tag: "Collection",
+      value: entity.collections.reviews.map((review) => ({
+        reviewer: review.reviewer,
+        state: review.state,
+      })),
+    }
   }
   return { kind: entity.kind, facts }
 }

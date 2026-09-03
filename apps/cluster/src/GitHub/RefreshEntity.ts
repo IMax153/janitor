@@ -1,4 +1,10 @@
-import { GitHubIssueApi, GitHubPullRequestApi } from "@janitor/domain/GitHub/Api"
+import {
+  GitHubCheckRunsApi,
+  GitHubIssueApi,
+  GitHubPullRequestApi,
+  GitHubPullRequestFileApi,
+  GitHubPullRequestReviewApi,
+} from "@janitor/domain/GitHub/Api"
 import { GitHubInstallationId, GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
 import { SyncGeneration } from "@janitor/domain/GitHub/Sync"
 import {
@@ -10,6 +16,7 @@ import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as Activity from "effect/unstable/workflow/Activity"
 import * as Workflow from "effect/unstable/workflow/Workflow"
+import { LabelingConfiguration } from "../Labeling/Configuration.ts"
 import { SnapshotHandoff } from "../Labeling/SnapshotHandoff.ts"
 import { REFRESH_ENTITY_TAG } from "../SyncRequests.ts"
 import { SyncTargets } from "../SyncTargets.ts"
@@ -63,14 +70,111 @@ const BeginActivityResult = Schema.Union([
   Schema.TaggedStruct("Superseded", {}),
 ])
 
+const Collections = Schema.Struct({
+  files: Schema.Array(Schema.Struct({ path: Schema.String, status: Schema.String })),
+  filesComplete: Schema.Boolean,
+  checks: Schema.Array(Schema.Struct({ name: Schema.String, state: Schema.String })),
+  reviews: Schema.Array(Schema.Struct({ reviewer: Schema.String, state: Schema.String })),
+})
+
+/** How many changed files one refresh reads before marking the listing incomplete. */
+export const MAX_CHANGED_FILES = 300
+const PAGE = 100
+
 const FetchResult = Schema.Union([
   Schema.TaggedStruct("Found", {
     issue: GitHubIssueApi,
     pullRequest: Schema.NullOr(GitHubPullRequestApi),
+    /** Fetched only when the configured revision reads a collection fact. */
+    collections: Schema.NullOr(Collections),
   }),
   /** GitHub returned 404 or 403. Ambiguous: keep state and let inventory verify access. */
   Schema.TaggedStruct("Ambiguous", { status: Schema.Int }),
 ])
+
+/** True when the configured revision reads any collection fact. Optional so sync tests run without labeling. */
+const collectionsRequired = (repositoryId: GitHubRepositoryDatabaseId) =>
+  Effect.serviceOption(LabelingConfiguration).pipe(
+    Effect.flatMap((configuration) =>
+      Option.isNone(configuration)
+        ? Effect.succeed(false)
+        : configuration.value.view(repositoryId).pipe(
+            Effect.flatMap((view) =>
+              view.configuredRevision === 0
+                ? Effect.succeed(false)
+                : configuration.value
+                    .load(repositoryId, view.configuredRevision)
+                    .pipe(
+                      Effect.map(
+                        (snapshot) =>
+                          Option.isSome(snapshot) &&
+                          snapshot.value.requiredTracks.some(
+                            (track) =>
+                              track === "changed_files" ||
+                              track === "checks" ||
+                              track === "reviews",
+                          ),
+                      ),
+                    ),
+            ),
+            Effect.catch(() => Effect.succeed(false)),
+          ),
+    ),
+  )
+
+interface RefreshRequest {
+  readonly scope: { readonly _tag: "Installation"; readonly installationId: GitHubInstallationId }
+  readonly priority: "webhook-refresh"
+}
+
+const fetchCollections = (path: string, number: number, headSha: string, request: RefreshRequest) =>
+  Effect.gen(function* () {
+    const files: Array<{ path: string; status: string }> = []
+    let filesComplete = true
+    for (let page = 1; page <= MAX_CHANGED_FILES / PAGE; page++) {
+      const listing = yield* fetchJson(
+        {
+          ...request,
+          method: "GET",
+          url: `${path}/pulls/${number}/files?per_page=${PAGE}&page=${page}`,
+        },
+        Schema.Array(GitHubPullRequestFileApi),
+      )
+      if (listing._tag === "Failed") return yield* failure(listing.message)
+      for (const file of listing.body) files.push({ path: file.filename, status: file.status })
+      if (listing.body.length < PAGE) break
+      if (page === MAX_CHANGED_FILES / PAGE) filesComplete = false
+    }
+    const runs = yield* fetchJson(
+      { ...request, method: "GET", url: `${path}/commits/${headSha}/check-runs?per_page=${PAGE}` },
+      GitHubCheckRunsApi,
+    )
+    if (runs._tag === "Failed") return yield* failure(runs.message)
+    const reviews = yield* fetchJson(
+      { ...request, method: "GET", url: `${path}/pulls/${number}/reviews?per_page=${PAGE}` },
+      Schema.Array(GitHubPullRequestReviewApi),
+    )
+    if (reviews._tag === "Failed") return yield* failure(reviews.message)
+    // Latest decisive review per reviewer; a dismissal clears theirs.
+    const latest = new Map<string, string>()
+    for (const review of [...reviews.body].sort((left, right) => left.id - right.id)) {
+      const reviewer = review.user?.login.toLowerCase()
+      if (reviewer === undefined) continue
+      if (review.state === "DISMISSED") latest.delete(reviewer)
+      else if (review.state !== "COMMENTED" && review.state !== "PENDING") {
+        latest.set(reviewer, review.state)
+      }
+    }
+    return {
+      files,
+      filesComplete,
+      checks: runs.body.checkRuns.map((run) => ({
+        name: run.name,
+        state: run.conclusion ?? run.status,
+      })),
+      reviews: [...latest].map(([reviewer, state]) => ({ reviewer, state })),
+    }
+  })
 
 export const RefreshEntityLayer = RefreshEntity.toLayer(
   Effect.fnUntraced(function* (payload) {
@@ -143,7 +247,12 @@ export const RefreshEntityLayer = RefreshEntity.toLayer(
               : yield* failure(issue.message)
           }
           if (issue.body.pullRequest === undefined) {
-            return { _tag: "Found" as const, issue: issue.body, pullRequest: null }
+            return {
+              _tag: "Found" as const,
+              issue: issue.body,
+              pullRequest: null,
+              collections: null,
+            }
           }
           const pull = yield* fetchJson(
             { ...request, method: "GET", url: `${path}/pulls/${number}` },
@@ -154,7 +263,10 @@ export const RefreshEntityLayer = RefreshEntity.toLayer(
               ? { _tag: "Ambiguous" as const, status: pull.status }
               : yield* failure(pull.message)
           }
-          return { _tag: "Found" as const, issue: issue.body, pullRequest: pull.body }
+          const collections = (yield* collectionsRequired(repositoryId))
+            ? yield* fetchCollections(path, number, pull.body.head.sha, request)
+            : null
+          return { _tag: "Found" as const, issue: issue.body, pullRequest: pull.body, collections }
         }),
       }),
     ).pipe(Effect.result)
@@ -190,6 +302,13 @@ export const RefreshEntityLayer = RefreshEntity.toLayer(
                   pullRequest: found.pullRequest,
                   sequence,
                 })
+                if (found.collections !== null) {
+                  yield* readModel.applyPullRequestCollections({
+                    repositoryId,
+                    number,
+                    collections: found.collections,
+                  })
+                }
               }
             }),
           )

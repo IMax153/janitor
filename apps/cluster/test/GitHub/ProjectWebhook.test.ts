@@ -94,6 +94,7 @@ const runWorkflow = (
             getEntity: () => Effect.succeedNone,
             listLabels: () => Effect.succeed([]),
             listOpenEntities: () => Effect.succeed([]),
+            applyPullRequestCollections: () => Effect.void,
           }),
         ),
         Layer.provide(

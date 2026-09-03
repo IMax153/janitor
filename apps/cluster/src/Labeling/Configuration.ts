@@ -149,6 +149,9 @@ const PendingTrackRow = Schema.Struct({ track: Schema.String })
 
 const ZERO = LabelingRevision.make(0)
 
+/** How many open pull requests one revision advance asks to refresh. */
+export const ENTITY_INVALIDATION_LIMIT = 500
+
 const isRepositoryTrack = (track: FactTrack): track is GitHubRepositoryTrack =>
   GitHubRepositoryTrack.literals.some((known) => known === track)
 
@@ -350,6 +353,23 @@ export class LabelingConfiguration extends Context.Service<
       // synchronization does not have yet are not waited for; their facts
       // evaluate as unknown until the track exists.
       const preparation: Record<string, string> = {}
+      // Collection facts are fetched per entity, so a revision that reads
+      // them asks every open pull request to refresh; they become available
+      // as those refreshes verify, and evaluate unknown until then.
+      if (requiredTracks.some((track) => !isRepositoryTrack(track))) {
+        const open = yield* readModel
+          .listOpenEntities(repositoryId, ENTITY_INVALIDATION_LIMIT)
+          .pipe(wrap("advance"))
+        for (const { entity, pullRequest } of open) {
+          if (Option.isNone(pullRequest)) continue
+          yield* targets
+            .invalidate({
+              scope: { _tag: "Entity", repositoryId, number: entity.number },
+              sequence: Option.none(),
+            })
+            .pipe(wrap("advance"))
+        }
+      }
       for (const track of requiredTracks) {
         if (!isRepositoryTrack(track)) continue
         const { generation } = yield* targets

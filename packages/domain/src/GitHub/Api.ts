@@ -123,3 +123,33 @@ export const GitHubPullRequestApi = Schema.Struct({
   .pipe(Schema.encodeKeys({ nodeId: "node_id", mergedAt: "merged_at", updatedAt: "updated_at" }))
   .annotate({ identifier: "GitHubPullRequestApi" })
 export type GitHubPullRequestApi = typeof GitHubPullRequestApi.Type
+
+/** One changed file from the pull request files listing. */
+export const GitHubPullRequestFileApi = Schema.Struct({
+  filename: Schema.NonEmptyString,
+  status: Schema.String,
+}).annotate({ identifier: "GitHubPullRequestFileApi" })
+export type GitHubPullRequestFileApi = typeof GitHubPullRequestFileApi.Type
+
+/** The check runs listing for a commit; state folds conclusion over status. */
+export const GitHubCheckRunApi = Schema.Struct({
+  name: Schema.NonEmptyString,
+  status: Schema.String,
+  conclusion: Schema.NullOr(Schema.String),
+}).annotate({ identifier: "GitHubCheckRunApi" })
+export type GitHubCheckRunApi = typeof GitHubCheckRunApi.Type
+
+export const GitHubCheckRunsApi = Schema.Struct({
+  checkRuns: Schema.Array(GitHubCheckRunApi),
+})
+  .pipe(Schema.encodeKeys({ checkRuns: "check_runs" }))
+  .annotate({ identifier: "GitHubCheckRunsApi" })
+export type GitHubCheckRunsApi = typeof GitHubCheckRunsApi.Type
+
+/** One review from the pull request reviews listing. */
+export const GitHubPullRequestReviewApi = Schema.Struct({
+  id: Schema.Int,
+  user: Schema.NullOr(ApiUser),
+  state: Schema.String,
+}).annotate({ identifier: "GitHubPullRequestReviewApi" })
+export type GitHubPullRequestReviewApi = typeof GitHubPullRequestReviewApi.Type

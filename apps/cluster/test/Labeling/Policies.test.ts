@@ -2,8 +2,10 @@ import { assert, layer } from "@effect/vitest"
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import { LabelingRevision } from "@janitor/domain/Labeling/Policy/Configuration"
+import type { ProgramSource } from "@janitor/domain/Labeling/Policy/Program"
 import { RulesetActivation } from "../../src/Labeling/Activation.ts"
 import { LabelingConfiguration } from "../../src/Labeling/Configuration.ts"
+import { GitHubReadModel } from "../../src/GitHub/ReadModel.ts"
 import { Policies } from "../../src/Labeling/Policies.ts"
 import { LabelingRules } from "../../src/Labeling/Rules.ts"
 import { LabelingTest } from "../../src/Labeling/Test.ts"
@@ -261,6 +263,62 @@ layer(Services, { timeout: "2 minutes" })("Policies and rules against Postgres",
         numbers: [],
       })
       assert.strictEqual(rejected._tag, "Rejected")
+
+      // Collection facts are unknown until a refresh fetched them, then evaluate.
+      const changeset: ProgramSource = {
+        target: "pull_request",
+        matchesWhen: {
+          some: "changedFiles",
+          where: { fact: "path", operator: "matchesGlob", value: ".changeset/*.md" },
+        },
+      }
+      const unknown = yield* test.run(repositoryId, {
+        subject: { _tag: "Draft", source: changeset },
+        numbers: [5],
+      })
+      assert.strictEqual(
+        unknown._tag === "Evaluated" ? unknown.entities[0]?.evaluation?.outcome : unknown._tag,
+        "unknown",
+      )
+      const readModel = yield* GitHubReadModel
+      yield* readModel.applyPullRequestCollections({
+        repositoryId,
+        number: 5,
+        collections: {
+          files: [
+            { path: ".changeset/brave-owls.md", status: "added" },
+            { path: "src/a.ts", status: "modified" },
+          ],
+          filesComplete: true,
+          checks: [{ name: "ci", state: "success" }],
+          reviews: [{ reviewer: "octocat", state: "APPROVED" }],
+        },
+      })
+      const known = yield* test.run(repositoryId, {
+        subject: { _tag: "Draft", source: changeset },
+        numbers: [5],
+      })
+      assert.strictEqual(
+        known._tag === "Evaluated" ? known.entities[0]?.evaluation?.outcome : known._tag,
+        "match",
+      )
+      const reviewed = yield* test.run(repositoryId, {
+        subject: {
+          _tag: "Draft",
+          source: {
+            target: "pull_request",
+            matchesWhen: {
+              none: "reviews",
+              where: { fact: "state", operator: "equals", value: "CHANGES_REQUESTED" },
+            },
+          },
+        },
+        numbers: [5],
+      })
+      assert.strictEqual(
+        reviewed._tag === "Evaluated" ? reviewed.entities[0]?.evaluation?.outcome : reviewed._tag,
+        "match",
+      )
     }),
   )
 })

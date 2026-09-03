@@ -77,10 +77,25 @@ export interface IssueObservation {
   readonly sequence: GitHubWebhookJournalSequence
 }
 
+export interface PullRequestCollections {
+  readonly files: ReadonlyArray<{ readonly path: string; readonly status: string }>
+  readonly filesComplete: boolean
+  readonly checks: ReadonlyArray<{ readonly name: string; readonly state: string }>
+  readonly reviews: ReadonlyArray<{ readonly reviewer: string; readonly state: string }>
+}
+
 export interface EntityView {
   readonly entity: GitHubEntityRecord
   readonly pullRequest: Option.Option<GitHubPullRequestRecord>
   readonly labels: ReadonlyArray<GitHubEntityLabelRecord>
+  /** Present once an entity refresh fetched the collection facts. */
+  readonly collections: Option.Option<PullRequestCollections>
+}
+
+export interface PullRequestCollectionsObservation {
+  readonly repositoryId: GitHubRepositoryDatabaseId
+  readonly number: number
+  readonly collections: PullRequestCollections
 }
 
 export interface PullRequestDetailsObservation {
@@ -164,6 +179,15 @@ const LabelRow = Schema.Struct({
   observed_at: Schema.DateTimeUtcFromDate,
 })
 
+const AggregateRow = Schema.Struct({ number: Schema.Int, files_complete: Schema.Boolean })
+const FileRow = Schema.Struct({ number: Schema.Int, path: Schema.String, status: Schema.String })
+const CheckRow = Schema.Struct({ number: Schema.Int, name: Schema.String, state: Schema.String })
+const ReviewRow = Schema.Struct({
+  number: Schema.Int,
+  reviewer: Schema.String,
+  state: Schema.String,
+})
+
 const EntityLabelRow = Schema.Struct({
   repository_id: GitHubEntityLabelRecord.fields.repositoryId,
   number: GitHubEntityLabelRecord.fields.number,
@@ -221,17 +245,14 @@ export class GitHubReadModel extends Context.Service<
     readonly getEntity: (
       repositoryId: GitHubRepositoryDatabaseId,
       number: number,
-    ) => Effect.Effect<
-      Option.Option<{
-        readonly entity: GitHubEntityRecord
-        readonly pullRequest: Option.Option<GitHubPullRequestRecord>
-        readonly labels: ReadonlyArray<GitHubEntityLabelRecord>
-      }>,
-      GitHubReadModelError
-    >
+    ) => Effect.Effect<Option.Option<EntityView>, GitHubReadModelError>
     readonly listLabels: (
       repositoryId: GitHubRepositoryDatabaseId,
     ) => Effect.Effect<ReadonlyArray<GitHubLabelRecord>, GitHubReadModelError>
+    /** Replaces the collection facts of one pull request wholesale. */
+    readonly applyPullRequestCollections: (
+      observation: PullRequestCollectionsObservation,
+    ) => Effect.Effect<void, GitHubReadModelError>
     /** Open entities, most recently updated on GitHub first. */
     readonly listOpenEntities: (
       repositoryId: GitHubRepositoryDatabaseId,
@@ -721,6 +742,39 @@ export class GitHubReadModel extends Context.Service<
           ORDER BY label_id
         `.pipe(Effect.flatMap(rowsToRecords(EntityLabelRow)), wrap(operation))
         const pullRequestByNumber = new Map(pullRequests.map((pr) => [pr.number, pr]))
+        const aggregates = yield* sql`
+          SELECT number, files_complete FROM github_pull_request_collections
+          WHERE repository_id = ${repositoryId} AND number IN ${sql.in(numbers)}
+        `.pipe(Effect.flatMap(rowsToRecords(AggregateRow)), wrap(operation))
+        const files = yield* sql`
+          SELECT number, path, status FROM github_pull_request_file
+          WHERE repository_id = ${repositoryId} AND number IN ${sql.in(numbers)} ORDER BY path
+        `.pipe(Effect.flatMap(rowsToRecords(FileRow)), wrap(operation))
+        const checks = yield* sql`
+          SELECT number, name, state FROM github_check_run
+          WHERE repository_id = ${repositoryId} AND number IN ${sql.in(numbers)} ORDER BY name
+        `.pipe(Effect.flatMap(rowsToRecords(CheckRow)), wrap(operation))
+        const reviews = yield* sql`
+          SELECT number, reviewer, state FROM github_pull_request_review
+          WHERE repository_id = ${repositoryId} AND number IN ${sql.in(numbers)} ORDER BY reviewer
+        `.pipe(Effect.flatMap(rowsToRecords(ReviewRow)), wrap(operation))
+        const collectionsFor = (number: number): Option.Option<PullRequestCollections> => {
+          const aggregate = aggregates.find((row) => row.number === number)
+          return aggregate === undefined
+            ? Option.none()
+            : Option.some({
+                files: files
+                  .filter((row) => row.number === number)
+                  .map(({ path, status }) => ({ path, status })),
+                filesComplete: aggregate.files_complete,
+                checks: checks
+                  .filter((row) => row.number === number)
+                  .map(({ name, state }) => ({ name, state })),
+                reviews: reviews
+                  .filter((row) => row.number === number)
+                  .map(({ reviewer, state }) => ({ reviewer, state })),
+              })
+        }
         return rows.map((row): EntityView => ({
           entity: toEntityRecord(row),
           pullRequest: Option.map(
@@ -728,8 +782,45 @@ export class GitHubReadModel extends Context.Service<
             toPullRequestRecord,
           ),
           labels: labels.filter((label) => label.number === row.number).map(toEntityLabelRecord),
+          collections: collectionsFor(row.number),
         }))
       })
+
+    const applyPullRequestCollections = Effect.fn("GitHubReadModel.applyPullRequestCollections")(
+      function* ({ repositoryId, number, collections }: PullRequestCollectionsObservation) {
+        // Wholesale replacement: the cascade clears the item tables.
+        yield* sql`
+        DELETE FROM github_pull_request_collections WHERE repository_id = ${repositoryId} AND number = ${number}
+      `.pipe(wrap("applyPullRequestCollections"))
+        const inserted = yield* sql`
+        INSERT INTO github_pull_request_collections (repository_id, number, files_complete)
+        SELECT ${repositoryId}, ${number}, ${collections.filesComplete}
+        WHERE EXISTS (SELECT 1 FROM github_entity WHERE repository_id = ${repositoryId} AND number = ${number})
+        RETURNING number
+      `.pipe(wrap("applyPullRequestCollections"))
+        if (inserted.length === 0) return
+        for (const file of collections.files) {
+          yield* sql`
+          INSERT INTO github_pull_request_file (repository_id, number, path, status)
+          VALUES (${repositoryId}, ${number}, ${file.path}, ${file.status}) ON CONFLICT DO NOTHING
+        `.pipe(wrap("applyPullRequestCollections"))
+        }
+        for (const check of collections.checks) {
+          yield* sql`
+          INSERT INTO github_check_run (repository_id, number, name, state)
+          VALUES (${repositoryId}, ${number}, ${check.name}, ${check.state})
+          ON CONFLICT (repository_id, number, name) DO UPDATE SET state = EXCLUDED.state
+        `.pipe(wrap("applyPullRequestCollections"))
+        }
+        for (const review of collections.reviews) {
+          yield* sql`
+          INSERT INTO github_pull_request_review (repository_id, number, reviewer, state)
+          VALUES (${repositoryId}, ${number}, ${review.reviewer}, ${review.state})
+          ON CONFLICT (repository_id, number, reviewer) DO UPDATE SET state = EXCLUDED.state
+        `.pipe(wrap("applyPullRequestCollections"))
+        }
+      },
+    )
 
     const getEntity = Effect.fn("GitHubReadModel.getEntity")(function* (
       repositoryId: GitHubRepositoryDatabaseId,
@@ -799,6 +890,7 @@ export class GitHubReadModel extends Context.Service<
       getInstallation,
       getRepository,
       getEntity,
+      applyPullRequestCollections,
       listOpenEntities,
       listLabels,
     }
