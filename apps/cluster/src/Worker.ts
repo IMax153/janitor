@@ -42,7 +42,10 @@ import {
 } from "./GitHub/SyncRepositoryTrack.ts"
 import { ContentPurge } from "./ContentPurge.ts"
 import { RulesetActivation } from "./Labeling/Activation.ts"
+import { LabelingOverview } from "./Labeling/Overview.ts"
+import { ReconcileEntityLayer, ReconcileEntityRegistration } from "./Labeling/ReconcileEntity.ts"
 import { LabelingRulesets } from "./Labeling/Rulesets.ts"
+import { SnapshotHandoff } from "./Labeling/SnapshotHandoff.ts"
 import { SyncPlanner } from "./SyncPlanner.ts"
 import { SyncRepairCronLayer, SyncRepairCronName } from "./SyncRepairCron.ts"
 import { SyncStatus } from "./SyncStatus.ts"
@@ -156,11 +159,18 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       SyncInstallationInventoryLayer,
       SyncRepositoryTrackLayer,
       RefreshEntityLayer,
+      ReconcileEntityLayer,
       WorkflowOutboxCronLayer,
       SyncRepairCronLayer,
     ).pipe(
       Layer.provideMerge(
-        Layer.mergeAll(SyncPlanner.layer, SyncStatus.layer, LabelingRulesets.layer),
+        Layer.mergeAll(
+          SyncPlanner.layer,
+          SyncStatus.layer,
+          LabelingRulesets.layer,
+          LabelingOverview.layer,
+          SnapshotHandoff.layer,
+        ),
       ),
       Layer.provideMerge(
         WorkflowDispatcher.layer([
@@ -168,6 +178,7 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
           SyncInstallationInventoryRegistration,
           SyncRepositoryTrackRegistration,
           RefreshEntityRegistration,
+          ReconcileEntityRegistration,
         ]),
       ),
       Layer.provideMerge(GitHubTransportLayer),

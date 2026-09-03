@@ -1,4 +1,5 @@
 import { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
+import { ReconciliationRecord, RepositoryOverview } from "@janitor/domain/Labeling/Reconciliation"
 import { RulesetIssue, RulesetView, SaveRulesetRequest } from "@janitor/domain/Labeling/Ruleset"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -6,6 +7,7 @@ import * as Schema from "effect/Schema"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
+import { LabelingOverview } from "../Labeling/Overview.ts"
 import { LabelingRulesets } from "../Labeling/Rulesets.ts"
 import { CurrentAccessIdentity } from "./Middleware.ts"
 import { SameOriginMiddleware } from "./Sync.ts"
@@ -15,6 +17,8 @@ const decodePath = HttpRouter.schemaPathParams(PathParams)
 const decodeBody = HttpServerRequest.schemaBodyJson(SaveRulesetRequest)
 
 const respondView = HttpServerResponse.schemaJson(RulesetView)
+const respondRepositories = HttpServerResponse.schemaJson(Schema.Array(RepositoryOverview))
+const respondReconciliations = HttpServerResponse.schemaJson(Schema.Array(ReconciliationRecord))
 const respondIssues = HttpServerResponse.schemaJson(
   Schema.Struct({ issues: Schema.Array(RulesetIssue) }),
 )
@@ -80,4 +84,31 @@ export const RulesetSaveRoute = HttpRouter.add(
   ),
 ).pipe(Layer.provide(SameOriginMiddleware))
 
-export const RulesRoutesLayer = Layer.mergeAll(RulesetLoadRoute, RulesetSaveRoute)
+export const RepositoriesRoute = HttpRouter.add(
+  "GET",
+  "/repositories",
+  Effect.gen(function* () {
+    const overview = yield* LabelingOverview
+    return yield* respondRepositories(yield* overview.repositories)
+  }).pipe(Effect.catchCause(unavailable("repositories"))),
+)
+
+export const ReconciliationsRoute = HttpRouter.add(
+  "GET",
+  "/repositories/:repositoryId/reconciliations",
+  Effect.gen(function* () {
+    const { repositoryId } = yield* decodePath
+    const overview = yield* LabelingOverview
+    return yield* respondReconciliations(yield* overview.reconciliations(repositoryId))
+  }).pipe(
+    Effect.catchTag("SchemaError", () => Effect.succeed(badRequestResponse)),
+    Effect.catchCause(unavailable("reconciliations")),
+  ),
+)
+
+export const RulesRoutesLayer = Layer.mergeAll(
+  RulesetLoadRoute,
+  RulesetSaveRoute,
+  RepositoriesRoute,
+  ReconciliationsRoute,
+)

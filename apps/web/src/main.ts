@@ -11,6 +11,7 @@ import * as Subscription from "foldkit/subscription"
 import * as Update from "foldkit/update"
 import { ChevronsUpDown } from "lucide"
 import * as JanitorIcon from "@/components/janitor-icon"
+import * as Repositories from "@/components/repositories"
 import * as Sidebar from "@/components/ui/sidebar"
 import * as SyncButton from "@/components/sync-button"
 import * as ThemeSwitcher from "@/components/theme-switcher"
@@ -33,6 +34,7 @@ export const Model = Schema.Struct({
   theme: ThemeSwitcher.Model,
   sync: SyncButton.Model,
   toast: AppToast.Model,
+  repositories: Repositories.Model,
 })
 export type Model = typeof Model.Type
 
@@ -48,6 +50,9 @@ export const Message = defineMessageUnion({
   },
   GotToastMessage: {
     message: AppToast.Message,
+  },
+  GotRepositoriesMessage: {
+    message: Repositories.Message,
   },
 })
 export type Message = typeof Message.Type
@@ -134,6 +139,13 @@ const foldSyncOutMessage =
     }
   }
 
+const foldRepositories = Update.foldChild({
+  update: Repositories.update,
+  read: (model: Model) => Option.some(model.repositories),
+  write: (model, next) => evo(model, { repositories: () => next }),
+  toParentMessage: (message) => Message.GotRepositoriesMessage({ message }),
+})
+
 const foldSyncButton = Update.foldChild({
   update: SyncButton.update,
   read: (model: Model) => Option.some(model.sync),
@@ -148,6 +160,7 @@ export const update = (model: Model, message: Message) =>
     GotThemeSwitcherMessage: ({ message }) => foldThemeSwitcher(model, message),
     GotSyncButtonMessage: ({ message }) => foldSyncButton(model, message),
     GotToastMessage: ({ message }) => foldToast(model, message),
+    GotRepositoriesMessage: ({ message }) => foldRepositories(model, message),
   })
 
 export type AppServices = KeyValueStore.KeyValueStore | HttpClient.HttpClient
@@ -157,9 +170,19 @@ export const init: Runtime.ApplicationInit<Model, Message, Flags, AppServices> =
   const sidebar = Sidebar.init({ id: "app-sidebar" })
   const sync = SyncButton.init()
   const toast = AppToast.init({ id: "app-toast", defaultDuration: "6 seconds" })
+  const repositories = Repositories.init()
   return {
-    model: Model.make({ sidebar, theme: theme.model, sync: sync.model, toast }),
+    model: Model.make({
+      sidebar,
+      theme: theme.model,
+      sync: sync.model,
+      toast,
+      repositories: repositories.model,
+    }),
     commands: [
+      ...Command.mapMessages(repositories.commands, (message) =>
+        Message.GotRepositoriesMessage({ message }),
+      ),
       ...Command.mapMessages(theme.commands, (message) =>
         Message.GotThemeSwitcherMessage({ message }),
       ),
@@ -183,10 +206,16 @@ const syncSubscriptions = Subscription.lift(SyncButton.subscriptions)<Model, Mes
   toParentMessage: (message) => Message.GotSyncButtonMessage({ message }),
 })
 
+const repositoriesSubscriptions = Subscription.lift(Repositories.subscriptions)<Model, Message>({
+  toChildModel: (model) => model.repositories,
+  toParentMessage: (message) => Message.GotRepositoriesMessage({ message }),
+})
+
 export const subscriptions = Subscription.aggregate<Model, Message, AppServices>()(
   sidebarSubscriptions,
   themeSubscriptions,
   syncSubscriptions,
+  repositoriesSubscriptions,
 )
 
 const repositorySwitcher = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
@@ -256,14 +285,7 @@ const mainHeader = (h: HtmlBuilder<Message>, model: Model, slots: Sidebar.Sideba
                 className: "-ml-1",
               }),
               Sidebar.separator(h, { className: "h-4 w-px" }),
-              h.span(
-                [h.Class("text-sm font-medium")],
-                [
-                  slots.state === "collapsed"
-                    ? "Collapsed — hover the icons or press ⌘B"
-                    : "Acme Inc — Playground / Starred",
-                ],
-              ),
+              h.span([h.Class("text-sm font-medium")], ["Auto-labeling"]),
             ],
           ),
           h.div(
@@ -327,7 +349,15 @@ const sidebarContent = (
   slots: Sidebar.SidebarSlots,
 ): ReadonlyArray<Html> => [
   Sidebar.inset(h, {
-    children: [mainHeader(h, model, slots)],
+    children: [
+      mainHeader(h, model, slots),
+      h.submodel({
+        slotId: "repositories",
+        model: model.repositories,
+        view: Repositories.view,
+        toParentMessage: (message) => Message.GotRepositoriesMessage({ message }),
+      }),
+    ],
   }),
   toasts(h, model),
 ]

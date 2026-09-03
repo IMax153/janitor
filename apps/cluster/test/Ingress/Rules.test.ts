@@ -7,6 +7,7 @@ import { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
 import type { RulesetView } from "@janitor/domain/Labeling/Ruleset"
 import { RulesetRevision } from "@janitor/domain/Labeling/Ruleset"
 import { CurrentAccessIdentity } from "../../src/Ingress/Middleware.ts"
+import { LabelingOverview } from "../../src/Labeling/Overview.ts"
 import { RulesRoutesLayer } from "../../src/Ingress/Rules.ts"
 import {
   LabelingRulesets,
@@ -33,6 +34,39 @@ const identity = {
   expiresAt: DateTime.makeUnsafe("2026-09-03T12:00:00.000Z"),
 }
 
+const overview: LabelingOverview["Service"] = {
+  repositories: Effect.succeed([
+    {
+      repositoryId,
+      owner: "effect",
+      repo: "one",
+      enabled: true,
+      access: "accessible",
+      configuredRevision: RulesetRevision.make(1),
+      activeRevision: null,
+    },
+  ]),
+  reconciliations: (id) =>
+    Effect.succeed(
+      id === repositoryId
+        ? [
+            {
+              repositoryId,
+              number: 5,
+              snapshotGeneration: "3" as never,
+              rulesRevision: RulesetRevision.make(1),
+              coveredSequence: "8" as never,
+              fingerprint: "a".repeat(64),
+              createdAt: DateTime.makeUnsafe("2026-09-03T14:40:25.000Z"),
+              outcome: "evaluated",
+              detail: "no rules evaluated yet",
+              completedAt: DateTime.makeUnsafe("2026-09-03T14:40:26.000Z"),
+            },
+          ]
+        : [],
+    ),
+}
+
 const withHandler = <A, E, R>(
   service: LabelingRulesets["Service"],
   use: (handler: (request: Request) => Promise<Response>) => Effect.Effect<A, E, R>,
@@ -45,6 +79,7 @@ const withHandler = <A, E, R>(
           request,
           Context.make(LabelingRulesets, service).pipe(
             Context.add(CurrentAccessIdentity, identity),
+            Context.add(LabelingOverview, overview),
           ),
         ),
       ),
@@ -166,5 +201,30 @@ describe("RulesRoutes", () => {
       )
       assert.strictEqual(crossOrigin.status, 403)
     }),
+  )
+
+  it.effect("lists repositories and reconciliations", () =>
+    withHandler({ load: () => Effect.die("unused"), save: () => Effect.die("unused") }, (handler) =>
+      Effect.gen(function* () {
+        const repositories = yield* Effect.promise(() =>
+          handler(new Request("https://janitor.example/repositories")),
+        )
+        assert.strictEqual(repositories.status, 200)
+        const rows = yield* Effect.promise(() => repositories.json())
+        assert.deepStrictEqual(
+          rows.map((row: { repo: string }) => row.repo),
+          ["one"],
+        )
+        const reconciliations = yield* Effect.promise(() =>
+          handler(
+            new Request(`https://janitor.example/repositories/${repositoryId}/reconciliations`),
+          ),
+        )
+        assert.strictEqual(reconciliations.status, 200)
+        const body = yield* Effect.promise(() => reconciliations.json())
+        assert.strictEqual(body[0].outcome, "evaluated")
+        assert.strictEqual(body[0].snapshotGeneration, "3")
+      }),
+    ),
   )
 })

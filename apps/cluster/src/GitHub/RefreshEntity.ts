@@ -10,6 +10,7 @@ import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as Activity from "effect/unstable/workflow/Activity"
 import * as Workflow from "effect/unstable/workflow/Workflow"
+import { SnapshotHandoff } from "../Labeling/SnapshotHandoff.ts"
 import { REFRESH_ENTITY_TAG } from "../SyncRequests.ts"
 import { SyncTargets } from "../SyncTargets.ts"
 import type { WorkflowRegistration } from "../WorkflowDispatcher.ts"
@@ -198,6 +199,19 @@ export const RefreshEntityLayer = RefreshEntity.toLayer(
     yield* completeRun("RefreshEntity", scope, generation, {
       _tag: "Verified",
       watermark: Option.none(),
+    })
+    // The verified snapshot is what auto-labeling evaluates. The handoff is
+    // idempotent on its identity, so a retried activity publishes once.
+    yield* Activity.make({
+      name: "RefreshEntity/Handoff",
+      error: SyncActivityError,
+      execute: Effect.gen(function* () {
+        const handoff = yield* Effect.serviceOption(SnapshotHandoff)
+        if (Option.isNone(handoff)) return
+        yield* handoff.value
+          .publish({ repositoryId, number, generation, sequence })
+          .pipe(Effect.mapError((error) => failure(error.message)))
+      }),
     })
     return result(generation, "verified")
   }, logWorkflowFailure("RefreshEntity")),
