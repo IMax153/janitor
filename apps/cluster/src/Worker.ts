@@ -44,7 +44,10 @@ import { ContentPurge } from "./ContentPurge.ts"
 import { RulesetActivation } from "./Labeling/Activation.ts"
 import { LabelingOverview } from "./Labeling/Overview.ts"
 import { ReconcileEntityLayer, ReconcileEntityRegistration } from "./Labeling/ReconcileEntity.ts"
-import { LabelingRulesets } from "./Labeling/Rulesets.ts"
+import { LabelingConfiguration } from "./Labeling/Configuration.ts"
+import { Policies } from "./Labeling/Policies.ts"
+import { LabelingRules } from "./Labeling/Rules.ts"
+import { LabelingTest } from "./Labeling/Test.ts"
 import { SnapshotHandoff } from "./Labeling/SnapshotHandoff.ts"
 import { SyncPlanner } from "./SyncPlanner.ts"
 import { SyncRepairCronLayer, SyncRepairCronName } from "./SyncRepairCron.ts"
@@ -167,11 +170,14 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
         Layer.mergeAll(
           SyncPlanner.layer,
           SyncStatus.layer,
-          LabelingRulesets.layer,
+          LabelingRules.layer,
+          LabelingTest.layer,
           LabelingOverview.layer,
           SnapshotHandoff.layer,
         ),
       ),
+      Layer.provideMerge(Policies.layer),
+      Layer.provideMerge(LabelingConfiguration.layer),
       Layer.provideMerge(
         WorkflowDispatcher.layer([
           ProjectGitHubWebhookRegistration,

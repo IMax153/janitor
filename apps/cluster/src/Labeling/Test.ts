@@ -1,0 +1,206 @@
+import { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
+import { compile } from "@janitor/domain/Labeling/Policy/Compile"
+import { LabelingRevision } from "@janitor/domain/Labeling/Policy/Configuration"
+import { evaluate, type Resolver } from "@janitor/domain/Labeling/Policy/Evaluate"
+import { type FactSnapshot, snapshotFacts } from "@janitor/domain/Labeling/Policy/Facts"
+import { plan, type RuleBinding } from "@janitor/domain/Labeling/Policy/Plan"
+import type { Outcome, Program } from "@janitor/domain/Labeling/Policy/Program"
+import { programFromSource, UnknownPolicyName } from "@janitor/domain/Labeling/Policy/Program"
+import {
+  MAX_TEST_ENTITIES,
+  type TestEntity,
+  type TestRequest,
+  type TestResponse,
+} from "@janitor/domain/Labeling/Policy/Test"
+import * as Context from "effect/Context"
+import * as Data from "effect/Data"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
+import * as Schema from "effect/Schema"
+import * as SqlClient from "effect/unstable/sql/SqlClient"
+import { type EntityView, GitHubReadModel } from "../GitHub/ReadModel.ts"
+import { describeError } from "../SqlErrors.ts"
+import {
+  LabelingConfiguration,
+  type LabelingConfigurationError,
+  type RepositoryNotFound,
+} from "./Configuration.ts"
+import { Policies } from "./Policies.ts"
+
+export class LabelingTestError extends Data.TaggedError("LabelingTestError")<{
+  readonly operation: string
+  readonly message: string
+}> {}
+
+const PointerRow = Schema.Struct({
+  configured_revision: Schema.FiniteFromString.pipe(Schema.decodeTo(LabelingRevision)),
+})
+
+export const entityFacts = (view: EntityView): FactSnapshot =>
+  snapshotFacts({
+    kind: view.entity.kind,
+    title: view.entity.title,
+    body: view.entity.body,
+    authorLogin: view.entity.authorLogin,
+    state: view.entity.state,
+    labels: view.labels.map((label) => label.labelId),
+    pullRequest: Option.map(view.pullRequest, (pr) => ({
+      baseRef: pr.baseRef,
+      draft: pr.draft,
+      headSha: pr.headSha,
+    })).pipe(Option.getOrNull),
+  })
+
+/**
+ * The test bench (plan: "LabelingTest"). Evaluates a draft, a published
+ * policy, or the configured revision against open entities from the read
+ * model. Same evaluator as reconciliation, no mutation, no GitHub read.
+ */
+export class LabelingTest extends Context.Service<
+  LabelingTest,
+  {
+    readonly run: (
+      repositoryId: GitHubRepositoryDatabaseId,
+      request: TestRequest,
+    ) => Effect.Effect<
+      TestResponse,
+      RepositoryNotFound | LabelingConfigurationError | LabelingTestError
+    >
+  }
+>()("@janitor/cluster/Labeling/Test/LabelingTest", {
+  make: Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    const readModel = yield* GitHubReadModel
+    const configuration = yield* LabelingConfiguration
+    const policies = yield* Policies
+    const decodePointers = Schema.decodeUnknownEffect(Schema.Array(PointerRow))
+
+    const wrap =
+      (operation: string) =>
+      <A, R>(effect: Effect.Effect<A, { readonly message: string }, R>) =>
+        Effect.mapError(
+          effect,
+          (error) => new LabelingTestError({ operation, message: describeError(error) }),
+        )
+
+    const entities = (repositoryId: GitHubRepositoryDatabaseId, numbers: ReadonlyArray<number>) =>
+      numbers.length === 0
+        ? readModel.listOpenEntities(repositoryId, MAX_TEST_ENTITIES)
+        : Effect.forEach(numbers, (number) => readModel.getEntity(repositoryId, number)).pipe(
+            Effect.map((found) =>
+              found.flatMap((entity) => (Option.isSome(entity) ? [entity.value] : [])),
+            ),
+          )
+
+    const describe = (
+      view: EntityView,
+      evaluation: TestEntity["evaluation"],
+      planned: TestEntity["plan"],
+    ): TestEntity => ({
+      number: view.entity.number,
+      kind: view.entity.kind,
+      title: view.entity.title,
+      authorLogin: view.entity.authorLogin,
+      baseRef: Option.map(view.pullRequest, (pr) => pr.baseRef).pipe(Option.getOrNull),
+      draft: Option.map(view.pullRequest, (pr) => pr.draft).pipe(Option.getOrNull),
+      labels: view.labels.map((label) => label.labelId),
+      evaluation,
+      plan: planned,
+    })
+
+    const run = Effect.fn("LabelingTest.run")(function* (
+      repositoryId: GitHubRepositoryDatabaseId,
+      request: TestRequest,
+    ) {
+      yield* configuration.requireRepository(repositoryId)
+      const views = yield* entities(repositoryId, request.numbers).pipe(wrap("entities"))
+
+      switch (request.subject._tag) {
+        case "Draft":
+        case "Policy": {
+          const resolve = yield* policies.resolver(repositoryId).pipe(wrap("resolver"))
+          let program: Program
+          if (request.subject._tag === "Draft") {
+            const names = yield* policies.names(repositoryId).pipe(wrap("names"))
+            const decoded = programFromSource(request.subject.source, names)
+            if (decoded instanceof UnknownPolicyName) {
+              return {
+                _tag: "Rejected",
+                message: `Policy '${decoded.name}' does not exist`,
+              } as const
+            }
+            const result = compile({ program: decoded, resolve })
+            if (result._tag === "Rejected") {
+              return { _tag: "Rejected", message: result.issue.message } as const
+            }
+            program = decoded
+          } else {
+            const version = resolve(request.subject.policyId)
+            if (version === undefined) {
+              return { _tag: "Rejected", message: "The policy is not published" } as const
+            }
+            program = version.program
+          }
+          return {
+            _tag: "Evaluated",
+            entities: views.map((view) =>
+              describe(view, evaluate({ program, snapshot: entityFacts(view), resolve }), null),
+            ),
+          } as const
+        }
+        case "Configuration": {
+          const pointer = yield* sql`
+            SELECT configured_revision::text FROM labeling_repository_rules WHERE repository_id = ${repositoryId}
+          `.pipe(Effect.flatMap(decodePointers), wrap("pointer"))
+          const revision = pointer[0]?.configured_revision
+          const snapshot =
+            revision === undefined
+              ? Option.none()
+              : yield* configuration.load(repositoryId, revision).pipe(wrap("load"))
+          if (Option.isNone(snapshot)) {
+            return { _tag: "Rejected", message: "Nothing is configured yet" } as const
+          }
+          const versions = new Map(
+            snapshot.value.versions.map((version) => [version.versionId, version]),
+          )
+          const byPolicy = new Map(
+            snapshot.value.versions.map((version) => [version.policyId, version]),
+          )
+          const resolve: Resolver = (policyId) => byPolicy.get(policyId)
+          return {
+            _tag: "Evaluated",
+            entities: views.map((view) => {
+              const facts = entityFacts(view)
+              const outcomes = new Map<RuleBinding["id"], Outcome>()
+              for (const rule of snapshot.value.rules) {
+                const version = versions.get(rule.policyVersionId)
+                outcomes.set(
+                  rule.id,
+                  version === undefined
+                    ? "unknown"
+                    : evaluate({ program: version.program, snapshot: facts, resolve }).outcome,
+                )
+              }
+              return describe(
+                view,
+                null,
+                plan({
+                  rules: snapshot.value.rules,
+                  outcomes,
+                  currentLabels: new Set(
+                    facts.facts.labels?._tag === "LabelSet" ? facts.facts.labels.value : [],
+                  ),
+                }),
+              )
+            }),
+          } as const
+        }
+      }
+    })
+
+    return { run }
+  }),
+}) {
+  static readonly layer = Layer.effect(this, this.make)
+}

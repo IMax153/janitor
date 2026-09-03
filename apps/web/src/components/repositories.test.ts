@@ -15,33 +15,48 @@ const one: Repositories.RepositoryOverview = {
 }
 const two: Repositories.RepositoryOverview = { ...one, repositoryId: "702", repo: "two" }
 
-const rules: Repositories.RulesetView = {
+const at = DateTime.makeUnsafe("2026-09-03T14:00:00.000Z")
+const configuration: Repositories.ConfigurationView = {
   repositoryId: "701",
   configuredRevision: 1,
-  configured: {
-    rules: [
-      {
-        id: "base-main",
-        name: "Base is main",
-        enabled: true,
-        target: "pull_request",
-        evaluator: { _tag: "Concrete", predicates: [{ _tag: "BaseBranchIs", ref: "main" }] },
-        labels: ["11"],
-        onMatch: "add",
-        onUnmatch: "remove-if-applied",
-        dryRun: false,
-      },
-    ],
-    conflicts: "last-rule-wins",
-  },
   activeRevision: 1,
   pendingTracks: [],
+  policies: [
+    {
+      policyId: "p1",
+      repositoryId: "701",
+      name: "Base is main",
+      target: "pull_request",
+      description: "",
+      publishedVersionId: "v1",
+      publishedRevision: 1,
+      version: 2,
+      createdAt: at,
+      updatedAt: at,
+    },
+  ],
+  rules: [
+    {
+      id: "r1",
+      repositoryId: "701",
+      labelId: "11",
+      policyId: "p1",
+      onNoMatch: "ensure-absent",
+      group: null,
+      priority: 0,
+      enabled: true,
+      labelStatus: "valid",
+      version: 1,
+      createdAt: at,
+      updatedAt: at,
+    },
+  ],
   labels: [{ labelId: "11", name: "bug", availability: "available" }],
   labelFreshness: "verified",
 }
 
 const detail: Repositories.RepositoryDetail = {
-  rules,
+  configuration,
   reconciliations: [
     {
       repositoryId: "701",
@@ -54,17 +69,8 @@ const detail: Repositories.RepositoryDetail = {
       outcome: "evaluated",
       detail: "1 change planned",
       plan: {
-        actions: [
-          {
-            labelId: "11",
-            action: "add",
-            ruleId: "base-main",
-            ruleName: "Base is main",
-            dryRun: false,
-          },
-        ],
-        matched: ["base-main"],
-        conflicts: [],
+        rules: [{ ruleId: "r1", outcome: "match", selected: true }],
+        actions: [{ labelId: "11", action: "add", ruleId: "r1" }],
       },
       completedAt: DateTime.makeUnsafe("2026-09-03T14:40:26.000Z"),
     },
@@ -109,16 +115,25 @@ describe("Repositories", () => {
     )
   })
 
-  it("describes revisions and predicates for people", () => {
-    expect(Repositories.describeRevision(rules)).toBe("Revision 1 active")
+  it("describes revisions and plans for people", () => {
+    expect(Repositories.describeRevision(configuration)).toBe("Revision 1 active")
     expect(
-      Repositories.describeRevision({ ...rules, activeRevision: null, pendingTracks: ["labels"] }),
+      Repositories.describeRevision({
+        ...configuration,
+        activeRevision: null,
+        pendingTracks: ["labels"],
+      }),
     ).toBe("Revision 1 waiting on labels")
-    expect(Repositories.describeRevision({ ...rules, configuredRevision: 0 })).toBe(
-      "No rules saved",
+    expect(Repositories.describeRevision({ ...configuration, configuredRevision: 0 })).toBe(
+      "Nothing configured",
     )
-    expect(Repositories.describePredicate({ _tag: "DraftStateIs", draft: false })).toBe(
-      "is not a draft",
-    )
+    expect(
+      Repositories.describePlan(
+        detail.reconciliations[0]!.plan!,
+        configuration.labels,
+        configuration.rules,
+        configuration.policies,
+      ),
+    ).toEqual(["add bug (Base is main)"])
   })
 })

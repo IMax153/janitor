@@ -5,7 +5,7 @@ import {
   type ReconciliationIdentity,
   reconciliationKey,
 } from "@janitor/domain/Labeling/Reconciliation"
-import { RulesetRevision } from "@janitor/domain/Labeling/Ruleset"
+import { LabelingRevision } from "@janitor/domain/Labeling/Policy/Configuration"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as DateTime from "effect/DateTime"
@@ -48,7 +48,7 @@ export type HandoffResult =
     }
 
 const ActiveRow = Schema.Struct({
-  active_revision: Schema.NullOr(Schema.FiniteFromString.pipe(Schema.decodeTo(RulesetRevision))),
+  active_revision: Schema.NullOr(Schema.FiniteFromString.pipe(Schema.decodeTo(LabelingRevision))),
 })
 
 const sha256Hex = (text: string) =>

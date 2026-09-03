@@ -3,8 +3,8 @@ import { GitHubRepositoryDatabaseId } from "../GitHub/Id.ts"
 import { GitHubRepositoryAccess } from "../GitHub/ReadModel.ts"
 import { SyncGeneration } from "../GitHub/Sync.ts"
 import { GitHubWebhookJournalSequence } from "../GitHub/WebhookJournal.ts"
-import { Plan } from "./Evaluation.ts"
-import { RulesetRevision } from "./Ruleset.ts"
+import { LabelingRevision } from "./Policy/Configuration.ts"
+import { Plan } from "./Policy/Plan.ts"
 
 /**
  * A reconciliation identity (design: "Qualified snapshots are evaluation
@@ -15,7 +15,7 @@ export const ReconciliationIdentity = Schema.Struct({
   repositoryId: GitHubRepositoryDatabaseId,
   number: Schema.Int.check(Schema.isGreaterThan(0)),
   snapshotGeneration: SyncGeneration,
-  rulesRevision: RulesetRevision,
+  rulesRevision: LabelingRevision,
 }).annotate({ identifier: "ReconciliationIdentity" })
 export type ReconciliationIdentity = typeof ReconciliationIdentity.Type
 
@@ -56,7 +56,7 @@ export const RepositoryOverview = Schema.Struct({
   repo: Schema.String,
   enabled: Schema.Boolean,
   access: GitHubRepositoryAccess,
-  configuredRevision: Schema.NullOr(RulesetRevision),
-  activeRevision: Schema.NullOr(RulesetRevision),
+  configuredRevision: Schema.NullOr(LabelingRevision),
+  activeRevision: Schema.NullOr(LabelingRevision),
 }).annotate({ identifier: "RepositoryOverview" })
 export type RepositoryOverview = typeof RepositoryOverview.Type

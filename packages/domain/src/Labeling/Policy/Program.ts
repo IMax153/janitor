@@ -13,6 +13,8 @@ import {
   UnknownPolicyName,
 } from "./Condition.ts"
 
+export { UnknownPolicyName } from "./Condition.ts"
+
 /**
  * Policy programs (plan: "Policies"). A program is applicability plus an
  * evaluator. Applicability is scope: a program that does not apply says

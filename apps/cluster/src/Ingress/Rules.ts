@@ -1,137 +1,354 @@
 import { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
 import { ReconciliationRecord, RepositoryOverview } from "@janitor/domain/Labeling/Reconciliation"
-import { PreviewRulesetRequest, RulesetPreview } from "@janitor/domain/Labeling/Evaluation"
-import { RulesetIssue, RulesetView, SaveRulesetRequest } from "@janitor/domain/Labeling/Ruleset"
+import { PolicyId } from "@janitor/domain/Labeling/Policy/Condition"
+import {
+  AuditEntry,
+  ConfigurationView,
+  CreatePolicyRequest,
+  CreateRuleRequest,
+  PatchRuleRequest,
+  PolicyDetail,
+  PolicyRecord,
+  PolicyVersionRecord,
+  PublishPolicyRequest,
+  RuleIssue,
+  RuleRecord,
+  SavePolicyRequest,
+  ValidatePolicyRequest,
+  ValidatePolicyResponse,
+} from "@janitor/domain/Labeling/Policy/Configuration"
+import { RuleId } from "@janitor/domain/Labeling/Policy/Plan"
+import { TestRequest, TestResponse } from "@janitor/domain/Labeling/Policy/Test"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
+import type * as HttpBody from "effect/unstable/http/HttpBody"
+import type * as HttpServerError from "effect/unstable/http/HttpServerError"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
+import { LabelingConfiguration, type RepositoryNotFound } from "../Labeling/Configuration.ts"
 import { LabelingOverview } from "../Labeling/Overview.ts"
-import { LabelingRulesets } from "../Labeling/Rulesets.ts"
+import {
+  Policies,
+  type PolicyConflict,
+  type PolicyInUse,
+  type PolicyInvalid,
+  type PolicyNameTaken,
+  type PolicyNotFound,
+} from "../Labeling/Policies.ts"
+import {
+  LabelingRules,
+  type RuleConflict,
+  type RuleInvalid,
+  type RuleNotFound,
+} from "../Labeling/Rules.ts"
+import { LabelingTest } from "../Labeling/Test.ts"
 import { CurrentAccessIdentity } from "./Middleware.ts"
 import { SameOriginMiddleware } from "./Sync.ts"
 
-const PathParams = Schema.Struct({ repositoryId: GitHubRepositoryDatabaseId })
-const decodePath = HttpRouter.schemaPathParams(PathParams)
-const decodeBody = HttpServerRequest.schemaBodyJson(SaveRulesetRequest)
-const decodePreviewBody = HttpServerRequest.schemaBodyJson(PreviewRulesetRequest)
-const respondPreview = HttpServerResponse.schemaJson(RulesetPreview)
+const RepositoryPath = Schema.Struct({ repositoryId: GitHubRepositoryDatabaseId })
+const PolicyPath = Schema.Struct({ repositoryId: GitHubRepositoryDatabaseId, policyId: PolicyId })
+const RulePath = Schema.Struct({ repositoryId: GitHubRepositoryDatabaseId, ruleId: RuleId })
+const VersionQuery = Schema.Struct({ version: Schema.FiniteFromString })
 
-const respondView = HttpServerResponse.schemaJson(RulesetView)
-const respondRepositories = HttpServerResponse.schemaJson(Schema.Array(RepositoryOverview))
-const respondReconciliations = HttpServerResponse.schemaJson(Schema.Array(ReconciliationRecord))
-const respondIssues = HttpServerResponse.schemaJson(
-  Schema.Struct({ issues: Schema.Array(RulesetIssue) }),
-)
+const repositoryPath = HttpRouter.schemaPathParams(RepositoryPath)
+const policyPath = HttpRouter.schemaPathParams(PolicyPath)
+const rulePath = HttpRouter.schemaPathParams(RulePath)
+const versionQuery = HttpRouter.schemaParams(VersionQuery)
 
-const badRequestResponse = HttpServerResponse.text("Bad Request", { status: 400 })
-const notFoundResponse = HttpServerResponse.empty({ status: 404 })
-const serviceUnavailableResponse = HttpServerResponse.text("Service Unavailable", {
+const json = HttpServerResponse.schemaJson
+const body = HttpServerRequest.schemaBodyJson
+
+const badRequest = HttpServerResponse.text("Bad Request", { status: 400 })
+const notFound = HttpServerResponse.empty({ status: 404 })
+const unavailableResponse = HttpServerResponse.text("Service Unavailable", {
   status: 503,
   headers: { "Retry-After": "10" },
 })
 
 const unavailable = (operation: string) =>
   Effect.fnUntraced(function* (cause: unknown) {
-    yield* Effect.logError(`Ruleset ${operation} failed`, cause)
-    return serviceUnavailableResponse
+    yield* Effect.logError(`Labeling ${operation} failed`, cause)
+    return unavailableResponse
   })
 
+const actor = Effect.map(CurrentAccessIdentity, (identity) => ({
+  issuer: identity.issuer,
+  subject: identity.subject,
+}))
+
+const respondIssues = json(Schema.Struct({ issues: Schema.Array(RuleIssue) }))
+const respondMessage = json(Schema.Struct({ message: Schema.String }))
+
 /**
- * Auto-labeling configuration (design: "Configuration API"). Both routes sit
- * behind the Access assertion check; the save additionally requires a
- * same-origin browser request and names the revision it edited.
+ * Every route sits behind the Access assertion; writes also require same
+ * origin. Domain failures map to statuses here; anything else is a 503.
  */
-export const RulesetLoadRoute = HttpRouter.add(
-  "GET",
-  "/repositories/:repositoryId/rules",
-  Effect.gen(function* () {
-    const { repositoryId } = yield* decodePath
-    const rulesets = yield* LabelingRulesets
-    return yield* respondView(yield* rulesets.load(repositoryId))
-  }).pipe(
-    Effect.catchTags({
-      SchemaError: () => Effect.succeed(badRequestResponse),
-      RepositoryNotFound: () => Effect.succeed(notFoundResponse),
-    }),
-    Effect.catchCause(unavailable("load")),
+type Handled =
+  | Schema.SchemaError
+  | HttpServerError.HttpServerError
+  | RepositoryNotFound
+  | PolicyNotFound
+  | PolicyConflict
+  | PolicyInvalid
+  | PolicyNameTaken
+  | PolicyInUse
+  | RuleNotFound
+  | RuleConflict
+  | RuleInvalid
+
+const handledTags: ReadonlySet<string> = new Set([
+  "SchemaError",
+  "HttpServerError",
+  "RepositoryNotFound",
+  "PolicyNotFound",
+  "PolicyConflict",
+  "PolicyInvalid",
+  "PolicyNameTaken",
+  "PolicyInUse",
+  "RuleNotFound",
+  "RuleConflict",
+  "RuleInvalid",
+])
+
+const isHandled = (error: unknown): error is Handled =>
+  typeof error === "object" &&
+  error !== null &&
+  "_tag" in error &&
+  typeof error._tag === "string" &&
+  handledTags.has(error._tag)
+
+const respond = (error: Handled) => {
+  switch (error._tag) {
+    case "SchemaError":
+    case "HttpServerError":
+      return Effect.succeed(badRequest)
+    case "RepositoryNotFound":
+    case "PolicyNotFound":
+    case "RuleNotFound":
+      return Effect.succeed(notFound)
+    case "PolicyConflict":
+      return json(PolicyDetail)(error.current, { status: 409 })
+    case "PolicyInvalid":
+      return respondMessage({ message: error.message }, { status: 422 })
+    case "PolicyNameTaken":
+      return respondMessage(
+        { message: `A policy named '${error.name}' already exists` },
+        { status: 409 },
+      )
+    case "PolicyInUse":
+      return respondMessage(
+        {
+          message: `The policy is bound by ${error.rules} rules and referenced by ${error.references} policies`,
+        },
+        { status: 409 },
+      )
+    case "RuleConflict":
+      return json(RuleRecord)(error.current, { status: 409 })
+    case "RuleInvalid":
+      return respondIssues({ issues: error.issues }, { status: 422 })
+  }
+}
+
+const handled =
+  (operation: string) =>
+  <A, E, R>(route: Effect.Effect<A, E, R>) =>
+    route.pipe(
+      Effect.catch(
+        (
+          error: E,
+        ): Effect.Effect<HttpServerResponse.HttpServerResponse, E | HttpBody.HttpBodyError> =>
+          isHandled(error) ? respond(error) : Effect.fail(error),
+      ),
+      Effect.catchCause(unavailable(operation)),
+    )
+
+const reads = HttpRouter.addAll([
+  HttpRouter.route(
+    "GET",
+    "/repositories",
+    Effect.gen(function* () {
+      const overview = yield* LabelingOverview
+      return yield* json(Schema.Array(RepositoryOverview))(yield* overview.repositories)
+    }).pipe(handled("repositories")),
   ),
-)
-
-export const RulesetSaveRoute = HttpRouter.add(
-  "PUT",
-  "/repositories/:repositoryId/rules",
-  Effect.gen(function* () {
-    const { repositoryId } = yield* decodePath
-    const body = yield* decodeBody
-    const identity = yield* CurrentAccessIdentity
-    const rulesets = yield* LabelingRulesets
-    const view = yield* rulesets.save({
-      repositoryId,
-      expectedRevision: body.expectedRevision,
-      ruleset: body.ruleset,
-      author: { issuer: identity.issuer, subject: identity.subject },
-    })
-    return yield* respondView(view)
-  }).pipe(
-    Effect.catchTags({
-      SchemaError: () => Effect.succeed(badRequestResponse),
-      HttpServerError: () => Effect.succeed(badRequestResponse),
-      RepositoryNotFound: () => Effect.succeed(notFoundResponse),
-      RulesetConflict: (error) => respondView(error.current, { status: 409 }),
-      RulesetInvalid: (error) => respondIssues({ issues: error.issues }, { status: 422 }),
-    }),
-    Effect.catchCause(unavailable("save")),
+  HttpRouter.route(
+    "GET",
+    "/repositories/:repositoryId/reconciliations",
+    Effect.gen(function* () {
+      const { repositoryId } = yield* repositoryPath
+      const overview = yield* LabelingOverview
+      return yield* json(Schema.Array(ReconciliationRecord))(
+        yield* overview.reconciliations(repositoryId),
+      )
+    }).pipe(handled("reconciliations")),
   ),
-).pipe(Layer.provide(SameOriginMiddleware))
-
-/** The editor's test bench: evaluate a draft against recent open entities. */
-export const RulesetPreviewRoute = HttpRouter.add(
-  "POST",
-  "/repositories/:repositoryId/rules/preview",
-  Effect.gen(function* () {
-    const { repositoryId } = yield* decodePath
-    const body = yield* decodePreviewBody
-    const rulesets = yield* LabelingRulesets
-    return yield* respondPreview(yield* rulesets.preview({ repositoryId, ruleset: body.ruleset }))
-  }).pipe(
-    Effect.catchTags({
-      SchemaError: () => Effect.succeed(badRequestResponse),
-      HttpServerError: () => Effect.succeed(badRequestResponse),
-      RepositoryNotFound: () => Effect.succeed(notFoundResponse),
-    }),
-    Effect.catchCause(unavailable("preview")),
+  HttpRouter.route(
+    "GET",
+    "/repositories/:repositoryId/configuration",
+    Effect.gen(function* () {
+      const { repositoryId } = yield* repositoryPath
+      const configuration = yield* LabelingConfiguration
+      return yield* json(ConfigurationView)(yield* configuration.view(repositoryId))
+    }).pipe(handled("configuration")),
   ),
-).pipe(Layer.provide(SameOriginMiddleware))
-
-export const RepositoriesRoute = HttpRouter.add(
-  "GET",
-  "/repositories",
-  Effect.gen(function* () {
-    const overview = yield* LabelingOverview
-    return yield* respondRepositories(yield* overview.repositories)
-  }).pipe(Effect.catchCause(unavailable("repositories"))),
-)
-
-export const ReconciliationsRoute = HttpRouter.add(
-  "GET",
-  "/repositories/:repositoryId/reconciliations",
-  Effect.gen(function* () {
-    const { repositoryId } = yield* decodePath
-    const overview = yield* LabelingOverview
-    return yield* respondReconciliations(yield* overview.reconciliations(repositoryId))
-  }).pipe(
-    Effect.catchTag("SchemaError", () => Effect.succeed(badRequestResponse)),
-    Effect.catchCause(unavailable("reconciliations")),
+  HttpRouter.route(
+    "GET",
+    "/repositories/:repositoryId/policies",
+    Effect.gen(function* () {
+      const { repositoryId } = yield* repositoryPath
+      const policies = yield* Policies
+      return yield* json(Schema.Array(PolicyRecord))(yield* policies.list(repositoryId))
+    }).pipe(handled("policies")),
   ),
-)
+  HttpRouter.route(
+    "GET",
+    "/repositories/:repositoryId/policies/:policyId",
+    Effect.gen(function* () {
+      const { repositoryId, policyId } = yield* policyPath
+      const policies = yield* Policies
+      return yield* json(PolicyDetail)(yield* policies.get(repositoryId, policyId))
+    }).pipe(handled("policy")),
+  ),
+  HttpRouter.route(
+    "GET",
+    "/repositories/:repositoryId/policies/:policyId/versions",
+    Effect.gen(function* () {
+      const { repositoryId, policyId } = yield* policyPath
+      const policies = yield* Policies
+      return yield* json(Schema.Array(PolicyVersionRecord))(
+        yield* policies.versions(repositoryId, policyId),
+      )
+    }).pipe(handled("versions")),
+  ),
+  HttpRouter.route(
+    "GET",
+    "/repositories/:repositoryId/rules",
+    Effect.gen(function* () {
+      const { repositoryId } = yield* repositoryPath
+      const rules = yield* LabelingRules
+      return yield* json(Schema.Array(RuleRecord))(yield* rules.list(repositoryId))
+    }).pipe(handled("rules")),
+  ),
+  HttpRouter.route(
+    "GET",
+    "/repositories/:repositoryId/audit",
+    Effect.gen(function* () {
+      const { repositoryId } = yield* repositoryPath
+      const rules = yield* LabelingRules
+      return yield* json(Schema.Array(AuditEntry))(yield* rules.audit(repositoryId))
+    }).pipe(handled("audit")),
+  ),
+])
 
-export const RulesRoutesLayer = Layer.mergeAll(
-  RulesetLoadRoute,
-  RulesetSaveRoute,
-  RulesetPreviewRoute,
-  RepositoriesRoute,
-  ReconciliationsRoute,
-)
+const writes = HttpRouter.addAll([
+  HttpRouter.route(
+    "POST",
+    "/repositories/:repositoryId/policies",
+    Effect.gen(function* () {
+      const { repositoryId } = yield* repositoryPath
+      const request = yield* body(CreatePolicyRequest)
+      const policies = yield* Policies
+      return yield* json(PolicyDetail)(
+        yield* policies.create(repositoryId, request, yield* actor),
+        { status: 201 },
+      )
+    }).pipe(handled("createPolicy")),
+  ),
+  HttpRouter.route(
+    "PUT",
+    "/repositories/:repositoryId/policies/:policyId",
+    Effect.gen(function* () {
+      const { repositoryId, policyId } = yield* policyPath
+      const request = yield* body(SavePolicyRequest)
+      const policies = yield* Policies
+      return yield* json(PolicyDetail)(
+        yield* policies.save(repositoryId, policyId, request, yield* actor),
+      )
+    }).pipe(handled("savePolicy")),
+  ),
+  HttpRouter.route(
+    "POST",
+    "/repositories/:repositoryId/policies/:policyId/publish",
+    Effect.gen(function* () {
+      const { repositoryId, policyId } = yield* policyPath
+      const request = yield* body(PublishPolicyRequest)
+      const policies = yield* Policies
+      return yield* json(PolicyDetail)(
+        yield* policies.publish(repositoryId, policyId, request.version, yield* actor),
+      )
+    }).pipe(handled("publishPolicy")),
+  ),
+  HttpRouter.route(
+    "DELETE",
+    "/repositories/:repositoryId/policies/:policyId",
+    Effect.gen(function* () {
+      const { repositoryId, policyId } = yield* policyPath
+      const { version } = yield* versionQuery
+      const policies = yield* Policies
+      yield* policies.remove(repositoryId, policyId, version, yield* actor)
+      return HttpServerResponse.empty({ status: 204 })
+    }).pipe(handled("removePolicy")),
+  ),
+  HttpRouter.route(
+    "POST",
+    "/repositories/:repositoryId/policies/validate",
+    Effect.gen(function* () {
+      const { repositoryId } = yield* repositoryPath
+      const request = yield* body(ValidatePolicyRequest)
+      const policies = yield* Policies
+      return yield* json(ValidatePolicyResponse)(
+        yield* policies.validate(repositoryId, request.source, Option.none()),
+      )
+    }).pipe(handled("validatePolicy")),
+  ),
+  HttpRouter.route(
+    "POST",
+    "/repositories/:repositoryId/rules",
+    Effect.gen(function* () {
+      const { repositoryId } = yield* repositoryPath
+      const request = yield* body(CreateRuleRequest)
+      const rules = yield* LabelingRules
+      return yield* json(RuleRecord)(yield* rules.create(repositoryId, request, yield* actor), {
+        status: 201,
+      })
+    }).pipe(handled("createRule")),
+  ),
+  HttpRouter.route(
+    "PATCH",
+    "/repositories/:repositoryId/rules/:ruleId",
+    Effect.gen(function* () {
+      const { repositoryId, ruleId } = yield* rulePath
+      const request = yield* body(PatchRuleRequest)
+      const rules = yield* LabelingRules
+      return yield* json(RuleRecord)(
+        yield* rules.patch(repositoryId, ruleId, request, yield* actor),
+      )
+    }).pipe(handled("patchRule")),
+  ),
+  HttpRouter.route(
+    "DELETE",
+    "/repositories/:repositoryId/rules/:ruleId",
+    Effect.gen(function* () {
+      const { repositoryId, ruleId } = yield* rulePath
+      const { version } = yield* versionQuery
+      const rules = yield* LabelingRules
+      yield* rules.remove(repositoryId, ruleId, version, yield* actor)
+      return HttpServerResponse.empty({ status: 204 })
+    }).pipe(handled("removeRule")),
+  ),
+  HttpRouter.route(
+    "POST",
+    "/repositories/:repositoryId/test",
+    Effect.gen(function* () {
+      const { repositoryId } = yield* repositoryPath
+      const request = yield* body(TestRequest)
+      const test = yield* LabelingTest
+      return yield* json(TestResponse)(yield* test.run(repositoryId, request))
+    }).pipe(handled("test")),
+  ),
+]).pipe(Layer.provide(SameOriginMiddleware))
+
+export const RulesRoutesLayer = Layer.mergeAll(reads, writes)

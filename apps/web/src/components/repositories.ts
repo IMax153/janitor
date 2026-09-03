@@ -19,8 +19,8 @@ import { cn } from "@/lib/utils"
 // CONSTANTS
 
 export const REPOSITORIES_ENDPOINT = "/api/v1/repositories"
-export const rulesEndpoint = (repositoryId: string) =>
-  `${REPOSITORIES_ENDPOINT}/${encodeURIComponent(repositoryId)}/rules`
+export const configurationEndpoint = (repositoryId: string) =>
+  `${REPOSITORIES_ENDPOINT}/${encodeURIComponent(repositoryId)}/configuration`
 export const reconciliationsEndpoint = (repositoryId: string) =>
   `${REPOSITORIES_ENDPOINT}/${encodeURIComponent(repositoryId)}/reconciliations`
 
@@ -43,44 +43,49 @@ export const RepositoryOverview = Schema.Struct({
 })
 export type RepositoryOverview = typeof RepositoryOverview.Type
 
-export const ConcretePredicate = Schema.Union([
-  Schema.TaggedStruct("TitleContains", { value: Schema.String, caseSensitive: Schema.Boolean }),
-  Schema.TaggedStruct("AuthorIs", { login: Schema.String }),
-  Schema.TaggedStruct("BaseBranchIs", { ref: Schema.String }),
-  Schema.TaggedStruct("DraftStateIs", { draft: Schema.Boolean }),
-])
-export type ConcretePredicate = typeof ConcretePredicate.Type
-
-export const Rule = Schema.Struct({
-  id: Schema.String,
+export const PolicyRecord = Schema.Struct({
+  policyId: Schema.String,
+  repositoryId: Schema.String,
   name: Schema.String,
-  enabled: Schema.Boolean,
   target: Schema.Literals(["issue", "pull_request"]),
-  evaluator: Schema.TaggedStruct("Concrete", { predicates: Schema.Array(ConcretePredicate) }),
-  labels: Schema.Array(Schema.String),
-  onMatch: Schema.Literals(["add", "remove"]),
-  onUnmatch: Schema.Literals(["keep", "remove-if-applied", "remove"]),
-  dryRun: Schema.Boolean,
+  description: Schema.String,
+  publishedVersionId: Schema.NullOr(Schema.String),
+  publishedRevision: Schema.NullOr(Schema.Int),
+  version: Schema.Int,
+  createdAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
 })
-export type Rule = typeof Rule.Type
+export type PolicyRecord = typeof PolicyRecord.Type
 
-export const PlanAction = Schema.Struct({
+export const RuleRecord = Schema.Struct({
+  id: Schema.String,
+  repositoryId: Schema.String,
   labelId: Schema.String,
-  action: Schema.Literals(["add", "remove"]),
-  ruleId: Schema.String,
-  ruleName: Schema.String,
-  dryRun: Schema.Boolean,
+  policyId: Schema.String,
+  onNoMatch: Schema.Literals(["ensure-absent", "preserve"]),
+  group: Schema.NullOr(Schema.String),
+  priority: Schema.Int,
+  enabled: Schema.Boolean,
+  labelStatus: Schema.Literals(["valid", "missing"]),
+  version: Schema.Int,
+  createdAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
 })
-export type PlanAction = typeof PlanAction.Type
+export type RuleRecord = typeof RuleRecord.Type
 
 export const Plan = Schema.Struct({
-  actions: Schema.Array(PlanAction),
-  matched: Schema.Array(Schema.String),
-  conflicts: Schema.Array(
+  rules: Schema.Array(
+    Schema.Struct({
+      ruleId: Schema.String,
+      outcome: Schema.Literals(["match", "no-match", "unknown", "not-applicable"]),
+      selected: Schema.Boolean,
+    }),
+  ),
+  actions: Schema.Array(
     Schema.Struct({
       labelId: Schema.String,
-      contenders: Schema.Array(Schema.String),
-      winner: Schema.String,
+      action: Schema.Literals(["add", "remove"]),
+      ruleId: Schema.String,
     }),
   ),
 })
@@ -101,19 +106,17 @@ export const SyncFreshness = Schema.Literals([
   "blocked",
 ])
 
-export const RulesetView = Schema.Struct({
+export const ConfigurationView = Schema.Struct({
   repositoryId: Schema.String,
   configuredRevision: Schema.Int,
-  configured: Schema.Struct({
-    rules: Schema.Array(Rule),
-    conflicts: Schema.Literals(["last-rule-wins", "first-rule-wins", "add-wins", "remove-wins"]),
-  }),
   activeRevision: Schema.NullOr(Schema.Int),
   pendingTracks: Schema.Array(Schema.String),
+  policies: Schema.Array(PolicyRecord),
+  rules: Schema.Array(RuleRecord),
   labels: Schema.Array(SynchronizedLabel),
   labelFreshness: SyncFreshness,
 })
-export type RulesetView = typeof RulesetView.Type
+export type ConfigurationView = typeof ConfigurationView.Type
 
 export const ReconciliationRecord = Schema.Struct({
   repositoryId: Schema.String,
@@ -131,7 +134,7 @@ export const ReconciliationRecord = Schema.Struct({
 export type ReconciliationRecord = typeof ReconciliationRecord.Type
 
 export const RepositoryDetail = Schema.Struct({
-  rules: RulesetView,
+  configuration: ConfigurationView,
   reconciliations: Schema.Array(ReconciliationRecord),
 })
 export type RepositoryDetail = typeof RepositoryDetail.Type
@@ -188,7 +191,7 @@ export const FetchDetail = FoldkitCommand.define("FetchDetail", {
   execute: ({ repositoryId }) =>
     Effect.all(
       {
-        rules: getJson(rulesEndpoint(repositoryId), RulesetView),
+        configuration: getJson(configurationEndpoint(repositoryId), ConfigurationView),
         reconciliations: getJson(
           reconciliationsEndpoint(repositoryId),
           Schema.Array(ReconciliationRecord),
@@ -296,47 +299,28 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
 
 // VIEW
 
-export const describePredicate = (predicate: ConcretePredicate): string => {
-  switch (predicate._tag) {
-    case "TitleContains":
-      return `title contains "${predicate.value}"${predicate.caseSensitive ? " (case sensitive)" : ""}`
-    case "AuthorIs":
-      return `author is ${predicate.login}`
-    case "BaseBranchIs":
-      return `base branch is ${predicate.ref}`
-    case "DraftStateIs":
-      return predicate.draft ? "is a draft" : "is not a draft"
-  }
-}
-
-/** How a rule behaves, for the rule card. */
-export const describeBehaviour = (rule: Rule): string => {
-  const unmatch =
-    rule.onUnmatch === "keep"
-      ? "keeps them otherwise"
-      : rule.onUnmatch === "remove"
-        ? "removes them otherwise"
-        : "removes them otherwise if it added them"
-  const base = `${rule.onMatch === "add" ? "adds" : "removes"} labels when matched, ${unmatch}`
-  return rule.dryRun ? `${base}, dry run` : base
-}
-
 /** One line per planned change, with label IDs resolved to names. */
 export const describePlan = (
   plan: Plan,
   labels: ReadonlyArray<SynchronizedLabel>,
+  rules: ReadonlyArray<RuleRecord>,
+  policies: ReadonlyArray<PolicyRecord>,
 ): ReadonlyArray<string> => {
   const name = (labelId: string) =>
     labels.find((label) => label.labelId === labelId)?.name ?? labelId
+  const via = (ruleId: string) => {
+    const rule = rules.find((candidate) => candidate.id === ruleId)
+    const policy = policies.find((candidate) => candidate.policyId === rule?.policyId)
+    return policy?.name ?? ruleId
+  }
   return plan.actions.map(
-    (action) =>
-      `${action.action} ${name(action.labelId)} (${action.ruleName}${action.dryRun ? ", dry run" : ""})`,
+    (action) => `${action.action} ${name(action.labelId)} (${via(action.ruleId)})`,
   )
 }
 
 /** One line of status for the configured revision. */
-export const describeRevision = (view: RulesetView): string => {
-  if (view.configuredRevision === 0) return "No rules saved"
+export const describeRevision = (view: ConfigurationView): string => {
+  if (view.configuredRevision === 0) return "Nothing configured"
   if (view.activeRevision === view.configuredRevision) {
     return `Revision ${view.configuredRevision} active`
   }
@@ -398,47 +382,37 @@ const repositoryList = (h: HtmlBuilder<Message>, model: Model): Html =>
           ),
   })
 
-const rulesSection = (h: HtmlBuilder<Message>, view: RulesetView): Html =>
+const policiesSection = (h: HtmlBuilder<Message>, view: ConfigurationView): Html =>
   h.section(
     [h.Class("flex flex-col gap-2")],
     [
-      sectionTitle(h, "Rules"),
+      sectionTitle(h, "Policies"),
       h.div([h.Class("text-muted-foreground text-sm")], [describeRevision(view)]),
-      view.configured.rules.length === 0
-        ? h.empty
+      view.policies.length === 0
+        ? h.div([h.Class("text-muted-foreground text-sm")], ["No policies yet"])
         : h.ul(
             [h.Class("flex flex-col gap-2")],
-            view.configured.rules.map((rule) =>
+            view.policies.map((policy) =>
               h.li(
-                [h.Class("rounded-md border p-3 text-sm")],
+                [h.Class("flex items-center justify-between gap-2 rounded-md border p-3 text-sm")],
                 [
                   h.div(
-                    [h.Class("flex items-center justify-between gap-2")],
+                    [h.Class("flex flex-col")],
                     [
-                      h.span([h.Class("font-medium")], [rule.name]),
+                      h.span([h.Class("font-medium")], [policy.name]),
                       h.span(
-                        [h.Class(cn(badgeClass, !rule.enabled && "opacity-60"))],
-                        [rule.enabled ? "enabled" : "disabled"],
+                        [h.Class("text-muted-foreground text-xs")],
+                        [policy.target === "pull_request" ? "Pull requests" : "Issues"],
                       ),
                     ],
                   ),
-                  h.div(
-                    [h.Class("text-muted-foreground mt-1")],
+                  h.span(
+                    [h.Class(cn(badgeClass, policy.publishedRevision === null && "opacity-60"))],
                     [
-                      `${rule.target === "pull_request" ? "Pull requests" : "Issues"} where ${rule.evaluator.predicates
-                        .map(describePredicate)
-                        .join(" and ")}`,
+                      policy.publishedRevision === null
+                        ? "draft"
+                        : `published v${policy.publishedRevision}`,
                     ],
-                  ),
-                  h.div([h.Class("text-muted-foreground text-xs")], [describeBehaviour(rule)]),
-                  h.div(
-                    [h.Class("mt-2 flex flex-wrap gap-1")],
-                    rule.labels.map((labelId) =>
-                      h.span(
-                        [h.Class(badgeClass)],
-                        [view.labels.find((label) => label.labelId === labelId)?.name ?? labelId],
-                      ),
-                    ),
                   ),
                 ],
               ),
@@ -447,7 +421,56 @@ const rulesSection = (h: HtmlBuilder<Message>, view: RulesetView): Html =>
     ],
   )
 
-const labelsSection = (h: HtmlBuilder<Message>, view: RulesetView): Html =>
+const rulesSection = (h: HtmlBuilder<Message>, view: ConfigurationView): Html =>
+  h.section(
+    [h.Class("flex flex-col gap-2")],
+    [
+      sectionTitle(h, "Rules"),
+      view.rules.length === 0
+        ? h.div([h.Class("text-muted-foreground text-sm")], ["No rules yet"])
+        : h.ul(
+            [h.Class("flex flex-col gap-2")],
+            view.rules.map((rule) => {
+              const label = view.labels.find((candidate) => candidate.labelId === rule.labelId)
+              const policy = view.policies.find((candidate) => candidate.policyId === rule.policyId)
+              return h.li(
+                [
+                  h.Class(
+                    cn(
+                      "flex items-center justify-between gap-2 rounded-md border p-3 text-sm",
+                      !rule.enabled && "opacity-60",
+                    ),
+                  ),
+                ],
+                [
+                  h.div(
+                    [h.Class("flex items-center gap-2")],
+                    [
+                      h.span([h.Class(badgeClass)], [label?.name ?? rule.labelId]),
+                      h.span([h.Class("text-muted-foreground")], ["when"]),
+                      h.span([h.Class("font-medium")], [policy?.name ?? rule.policyId]),
+                    ],
+                  ),
+                  h.div(
+                    [h.Class("text-muted-foreground text-xs")],
+                    [
+                      [
+                        rule.onNoMatch === "ensure-absent" ? "removed on miss" : "kept on miss",
+                        rule.group === null ? "" : `group ${rule.group} priority ${rule.priority}`,
+                        rule.enabled ? "" : "disabled",
+                      ]
+                        .filter((part) => part.length > 0)
+                        .join(" · "),
+                    ],
+                  ),
+                ],
+              )
+            }),
+          ),
+    ],
+  )
+
+const labelsSection = (h: HtmlBuilder<Message>, view: ConfigurationView): Html =>
   h.section(
     [h.Class("flex flex-col gap-2")],
     [
@@ -474,10 +497,10 @@ const labelsSection = (h: HtmlBuilder<Message>, view: RulesetView): Html =>
 const planCell = (
   h: HtmlBuilder<Message>,
   row: ReconciliationRecord,
-  labels: ReadonlyArray<SynchronizedLabel>,
+  view: ConfigurationView,
 ): Html => {
   if (row.plan === null) return h.span([h.Class("text-muted-foreground")], [""])
-  const lines = describePlan(row.plan, labels)
+  const lines = describePlan(row.plan, view.labels, view.rules, view.policies)
   return lines.length === 0
     ? h.span([h.Class("text-muted-foreground")], ["no changes"])
     : h.ul(
@@ -491,7 +514,7 @@ const planCell = (
 const reconciliationsSection = (
   h: HtmlBuilder<Message>,
   reconciliations: ReadonlyArray<ReconciliationRecord>,
-  labels: ReadonlyArray<SynchronizedLabel>,
+  view: ConfigurationView,
 ): Html =>
   h.section(
     [h.Class("flex flex-col gap-2")],
@@ -528,7 +551,7 @@ const reconciliationsSection = (
                       h.td([h.Class("py-1 pr-3")], [row.snapshotGeneration]),
                       h.td([h.Class("py-1 pr-3")], [String(row.rulesRevision)]),
                       h.td([h.Class("py-1 pr-3")], [row.outcome ?? "pending"]),
-                      h.td([h.Class("py-1 pr-3")], [planCell(h, row, labels)]),
+                      h.td([h.Class("py-1 pr-3")], [planCell(h, row, view)]),
                       h.td([h.Class("text-muted-foreground py-1 pr-3")], [row.detail ?? ""]),
                       h.td(
                         [h.Class("text-muted-foreground py-1 pr-3 whitespace-nowrap")],
@@ -562,9 +585,10 @@ const detailPanel = (h: HtmlBuilder<Message>, model: Model): Html =>
                 onSome: (reason) =>
                   h.div([h.Class("text-destructive text-sm")], [`Refresh failed: ${reason}`]),
               }),
-              rulesSection(h, detail.rules),
-              labelsSection(h, detail.rules),
-              reconciliationsSection(h, detail.reconciliations, detail.rules.labels),
+              policiesSection(h, detail.configuration),
+              rulesSection(h, detail.configuration),
+              labelsSection(h, detail.configuration),
+              reconciliationsSection(h, detail.reconciliations, detail.configuration),
             ],
           ),
       }),

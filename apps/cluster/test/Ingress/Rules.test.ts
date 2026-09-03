@@ -3,73 +3,148 @@ import * as Context from "effect/Context"
 import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
-import { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
-import type { RulesetView } from "@janitor/domain/Labeling/Ruleset"
-import { RulesetRevision } from "@janitor/domain/Labeling/Ruleset"
-import { CurrentAccessIdentity } from "../../src/Ingress/Middleware.ts"
-import { LabelingOverview } from "../../src/Labeling/Overview.ts"
-import { RulesRoutesLayer } from "../../src/Ingress/Rules.ts"
+import { GitHubLabelDatabaseId, GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
+import { PolicyId } from "@janitor/domain/Labeling/Policy/Condition"
 import {
-  LabelingRulesets,
-  RepositoryNotFound,
-  RulesetConflict,
-  RulesetInvalid,
-  type SaveRuleset,
-} from "../../src/Labeling/Rulesets.ts"
+  type ConfigurationView,
+  LabelingRevision,
+  type PolicyDetail,
+  type PolicyRecord,
+  type RuleRecord,
+} from "@janitor/domain/Labeling/Policy/Configuration"
+import { RuleId } from "@janitor/domain/Labeling/Policy/Plan"
+import { CurrentAccessIdentity } from "../../src/Ingress/Middleware.ts"
+import { RulesRoutesLayer } from "../../src/Ingress/Rules.ts"
+import { LabelingConfiguration } from "../../src/Labeling/Configuration.ts"
+import { LabelingOverview } from "../../src/Labeling/Overview.ts"
+import {
+  Policies,
+  PolicyConflict,
+  PolicyInvalid,
+  PolicyNotFound,
+} from "../../src/Labeling/Policies.ts"
+import { LabelingRules, RuleInvalid } from "../../src/Labeling/Rules.ts"
+import { LabelingTest } from "../../src/Labeling/Test.ts"
 
 const repositoryId = GitHubRepositoryDatabaseId.make("701")
-const view: RulesetView = {
-  repositoryId,
-  configuredRevision: RulesetRevision.make(1),
-  configured: { rules: [], conflicts: "last-rule-wins" },
-  activeRevision: null,
-  pendingTracks: [],
-  labels: [],
-  labelFreshness: "projected",
-}
+const policyId = PolicyId.make("policy-1")
+const at = DateTime.makeUnsafe("2026-09-03T12:00:00.000Z")
 const identity = {
   issuer: "https://team.cloudflareaccess.test",
   subject: "user-1",
   email: undefined,
-  expiresAt: DateTime.makeUnsafe("2026-09-03T12:00:00.000Z"),
+  expiresAt: at,
+}
+
+const policy: PolicyRecord = {
+  policyId,
+  repositoryId,
+  name: "Base is main",
+  target: "pull_request",
+  description: "",
+  publishedVersionId: null,
+  publishedRevision: null,
+  version: 1,
+  createdAt: at,
+  updatedAt: at,
+}
+const detail: PolicyDetail = {
+  policy,
+  draft: {
+    target: "pull_request",
+    matchesWhen: { fact: "baseRef", operator: "equals", value: "main", caseSensitive: false },
+  },
+  draftDiffers: true,
+  published: null,
+}
+const rule: RuleRecord = {
+  id: RuleId.make("rule-1"),
+  repositoryId,
+  labelId: GitHubLabelDatabaseId.make("11"),
+  policyId,
+  onNoMatch: "ensure-absent",
+  group: null,
+  priority: 0,
+  enabled: true,
+  labelStatus: "valid",
+  version: 1,
+  createdAt: at,
+  updatedAt: at,
+}
+const view: ConfigurationView = {
+  repositoryId,
+  configuredRevision: LabelingRevision.make(1),
+  activeRevision: null,
+  pendingTracks: ["entities"],
+  policies: [policy],
+  rules: [rule],
+  labels: [{ labelId: rule.labelId, name: "bug", availability: "available" }],
+  labelFreshness: "verified",
+}
+
+const unused = () => Effect.die("unused")
+
+const policies: Policies["Service"] = {
+  list: () => Effect.succeed([policy]),
+  get: (_, id) =>
+    id === policyId ? Effect.succeed(detail) : Effect.fail(new PolicyNotFound({ policyId: id })),
+  create: (_, request, actor) =>
+    Effect.succeed({
+      ...detail,
+      policy: { ...policy, name: request.name, description: actor.subject },
+    }),
+  save: (_, __, request) =>
+    request.version === 1
+      ? Effect.succeed({ ...detail, policy: { ...policy, version: 2 } })
+      : Effect.fail(new PolicyConflict({ current: detail })),
+  publish: () =>
+    Effect.fail(new PolicyInvalid({ message: "Fact 'draft' does not exist for issue" })),
+  validate: () =>
+    Effect.succeed({
+      _tag: "Valid",
+      manifest: {
+        facts: ["baseRef"],
+        tracks: ["pull_requests"],
+        references: [],
+        nodeCount: 1,
+        expandedNodeCount: 1,
+      },
+    }),
+  versions: () => Effect.succeed([]),
+  remove: unused,
+  names: unused,
+  resolver: unused,
+}
+
+const rules: LabelingRules["Service"] = {
+  list: () => Effect.succeed([rule]),
+  create: (_, request) =>
+    request.labelId === rule.labelId
+      ? Effect.succeed(rule)
+      : Effect.fail(new RuleInvalid({ issues: [{ code: "unresolved-label", message: "nope" }] })),
+  patch: () => Effect.succeed({ ...rule, version: 2 }),
+  remove: () => Effect.void,
+  audit: () => Effect.succeed([]),
+}
+
+const configuration: LabelingConfiguration["Service"] = {
+  requireRepository: unused,
+  labels: unused,
+  load: unused,
+  advance: unused,
+  view: () => Effect.succeed(view),
+}
+
+const test: LabelingTest["Service"] = {
+  run: () => Effect.succeed({ _tag: "Evaluated", entities: [] }),
 }
 
 const overview: LabelingOverview["Service"] = {
-  repositories: Effect.succeed([
-    {
-      repositoryId,
-      owner: "effect",
-      repo: "one",
-      enabled: true,
-      access: "accessible",
-      configuredRevision: RulesetRevision.make(1),
-      activeRevision: null,
-    },
-  ]),
-  reconciliations: (id) =>
-    Effect.succeed(
-      id === repositoryId
-        ? [
-            {
-              repositoryId,
-              number: 5,
-              snapshotGeneration: "3" as never,
-              rulesRevision: RulesetRevision.make(1),
-              coveredSequence: "8" as never,
-              fingerprint: "a".repeat(64),
-              createdAt: DateTime.makeUnsafe("2026-09-03T14:40:25.000Z"),
-              outcome: "evaluated",
-              detail: "no changes (0 rules matched)",
-              plan: { actions: [], matched: [], conflicts: [] },
-              completedAt: DateTime.makeUnsafe("2026-09-03T14:40:26.000Z"),
-            },
-          ]
-        : [],
-    ),
+  repositories: Effect.succeed([]),
+  reconciliations: () => Effect.succeed([]),
 }
 
 const withHandler = <A, E, R>(
-  service: LabelingRulesets["Service"],
   use: (handler: (request: Request) => Promise<Response>) => Effect.Effect<A, E, R>,
 ) =>
   Effect.acquireUseRelease(
@@ -78,222 +153,114 @@ const withHandler = <A, E, R>(
       use((request) =>
         handler(
           request,
-          Context.make(LabelingRulesets, service).pipe(
-            Context.add(CurrentAccessIdentity, identity),
+          Context.make(Policies, policies).pipe(
+            Context.add(LabelingRules, rules),
+            Context.add(LabelingConfiguration, configuration),
+            Context.add(LabelingTest, test),
             Context.add(LabelingOverview, overview),
+            Context.add(CurrentAccessIdentity, identity),
           ),
         ),
       ),
     ({ dispose }) => Effect.promise(dispose),
   )
 
-const put = (body: unknown, path = `/repositories/${repositoryId}/rules`) =>
+const request = (method: string, path: string, body?: unknown, site = "same-origin") =>
   new Request(`https://janitor.example${path}`, {
-    method: "PUT",
-    headers: { "sec-fetch-site": "same-origin", "content-type": "application/json" },
-    body: JSON.stringify(body),
+    method,
+    headers: { "sec-fetch-site": site, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
 
-const saveBody = { expectedRevision: 1, ruleset: { rules: [] } }
-
-const post = (body: unknown, path: string) =>
-  new Request(`https://janitor.example${path}`, {
-    method: "POST",
-    headers: { "sec-fetch-site": "same-origin", "content-type": "application/json" },
-    body: JSON.stringify(body),
-  })
+const base = `/repositories/${repositoryId}`
 
 describe("RulesRoutes", () => {
-  it.effect("previews a draft ruleset on a same-origin request", () =>
-    withHandler(
-      {
-        load: () => Effect.die("unused"),
-        save: () => Effect.die("unused"),
-        preview: ({ ruleset }) =>
-          Effect.succeed({
-            issues: [],
-            entities: [
-              {
-                number: 5,
-                snapshot: {
-                  kind: "pull_request",
-                  title: "Trace",
-                  authorLogin: "octocat",
-                  state: "open",
-                  baseRef: "main",
-                  draft: false,
-                  labels: [],
-                },
-                plan: { actions: [], matched: ruleset.rules.map((rule) => rule.id), conflicts: [] },
-              },
-            ],
-          }),
-      },
-      (handler) =>
-        Effect.gen(function* () {
-          const response = yield* Effect.promise(() =>
-            handler(
-              post({ ruleset: { rules: [] } }, `/repositories/${repositoryId}/rules/preview`),
-            ),
-          )
-          assert.strictEqual(response.status, 200)
-          const body = yield* Effect.promise(() => response.json())
-          assert.strictEqual(body.entities[0].number, 5)
-          const malformed = yield* Effect.promise(() =>
-            handler(post({ nope: true }, `/repositories/${repositoryId}/rules/preview`)),
-          )
-          assert.strictEqual(malformed.status, 400)
-        }),
+  it.effect("serves the configuration, policies, and rules", () =>
+    withHandler((handler) =>
+      Effect.gen(function* () {
+        const configured = yield* Effect.promise(() =>
+          handler(request("GET", `${base}/configuration`)),
+        )
+        assert.strictEqual(configured.status, 200)
+        const body = yield* Effect.promise(() => configured.json())
+        assert.deepStrictEqual(body.pendingTracks, ["entities"])
+        assert.strictEqual(body.rules[0].labelId, "11")
+
+        const one = yield* Effect.promise(() =>
+          handler(request("GET", `${base}/policies/${policyId}`)),
+        )
+        assert.strictEqual(one.status, 200)
+        const missing = yield* Effect.promise(() =>
+          handler(request("GET", `${base}/policies/nope`)),
+        )
+        assert.strictEqual(missing.status, 404)
+        const malformed = yield* Effect.promise(() =>
+          handler(request("GET", "/repositories/x/rules")),
+        )
+        assert.strictEqual(malformed.status, 400)
+      }),
     ),
   )
 
-  it.effect("loads the view and 404s an unknown repository", () =>
-    withHandler(
-      {
-        load: (id) =>
-          id === repositoryId
-            ? Effect.succeed(view)
-            : Effect.fail(new RepositoryNotFound({ repositoryId: id })),
-        save: () => Effect.die("unused"),
-        preview: () => Effect.die("unused"),
-      },
-      (handler) =>
-        Effect.gen(function* () {
-          const ok = yield* Effect.promise(() =>
-            handler(new Request(`https://janitor.example/repositories/${repositoryId}/rules`)),
-          )
-          assert.strictEqual(ok.status, 200)
-          const body = yield* Effect.promise(() => ok.json())
-          assert.strictEqual(body.configuredRevision, 1)
-          const missing = yield* Effect.promise(() =>
-            handler(new Request("https://janitor.example/repositories/999/rules")),
-          )
-          assert.strictEqual(missing.status, 404)
-          const malformed = yield* Effect.promise(() =>
-            handler(new Request("https://janitor.example/repositories/not-an-id/rules")),
-          )
-          assert.strictEqual(malformed.status, 400)
-        }),
-    ),
-  )
+  it.effect("writes with the Access identity and maps failures to statuses", () =>
+    withHandler((handler) =>
+      Effect.gen(function* () {
+        const created = yield* Effect.promise(() =>
+          handler(request("POST", `${base}/policies`, { name: "Ready", source: detail.draft })),
+        )
+        assert.strictEqual(created.status, 201)
+        assert.strictEqual(
+          (yield* Effect.promise(() => created.json())).policy.description,
+          "user-1",
+        )
 
-  it.effect("saves with the Access identity as author", () => {
-    const seen: Array<SaveRuleset> = []
-    return withHandler(
-      {
-        load: () => Effect.die("unused"),
-        save: (request) =>
-          Effect.sync(() => {
-            seen.push(request)
-            return { ...view, configuredRevision: RulesetRevision.make(2) }
-          }),
-        preview: () => Effect.die("unused"),
-      },
-      (handler) =>
-        Effect.gen(function* () {
-          const response = yield* Effect.promise(() => handler(put(saveBody)))
-          assert.strictEqual(response.status, 200)
-          assert.strictEqual((yield* Effect.promise(() => response.json())).configuredRevision, 2)
-          assert.deepStrictEqual(seen[0]?.author, {
-            issuer: "https://team.cloudflareaccess.test",
-            subject: "user-1",
-          })
-          assert.strictEqual(seen[0]?.expectedRevision, 1)
-        }),
-    )
-  })
+        const conflict = yield* Effect.promise(() =>
+          handler(request("PUT", `${base}/policies/${policyId}`, { version: 9 })),
+        )
+        assert.strictEqual(conflict.status, 409)
+        const invalid = yield* Effect.promise(() =>
+          handler(request("POST", `${base}/policies/${policyId}/publish`, { version: 1 })),
+        )
+        assert.strictEqual(invalid.status, 422)
+        assert.include((yield* Effect.promise(() => invalid.json())).message, "issue")
+        const validated = yield* Effect.promise(() =>
+          handler(request("POST", `${base}/policies/validate`, { source: detail.draft })),
+        )
+        assert.strictEqual((yield* Effect.promise(() => validated.json()))._tag, "Valid")
 
-  it.effect("maps conflict, invalid, malformed body, and cross-origin to their statuses", () =>
-    Effect.gen(function* () {
-      const conflict = yield* withHandler(
-        {
-          load: () => Effect.die("unused"),
-          save: () => Effect.fail(new RulesetConflict({ current: view })),
-          preview: () => Effect.die("unused"),
-        },
-        (handler) => Effect.promise(() => handler(put(saveBody))),
-      )
-      assert.strictEqual(conflict.status, 409)
-      assert.strictEqual((yield* Effect.promise(() => conflict.json())).configuredRevision, 1)
+        const ruleInvalid = yield* Effect.promise(() =>
+          handler(
+            request("POST", `${base}/rules`, { labelId: "404", policyId, onNoMatch: "preserve" }),
+          ),
+        )
+        assert.strictEqual(ruleInvalid.status, 422)
+        const ruleCreated = yield* Effect.promise(() =>
+          handler(
+            request("POST", `${base}/rules`, { labelId: "11", policyId, onNoMatch: "preserve" }),
+          ),
+        )
+        assert.strictEqual(ruleCreated.status, 201)
+        const removed = yield* Effect.promise(() =>
+          handler(request("DELETE", `${base}/rules/rule-1?version=1`)),
+        )
+        assert.strictEqual(removed.status, 204)
+        const tested = yield* Effect.promise(() =>
+          handler(request("POST", `${base}/test`, { subject: { _tag: "Configuration" } })),
+        )
+        assert.strictEqual(tested.status, 200)
 
-      const invalid = yield* withHandler(
-        {
-          load: () => Effect.die("unused"),
-          save: () =>
-            Effect.fail(
-              new RulesetInvalid({
-                issues: [{ ruleId: "r1" as never, code: "unresolved-label", message: "nope" }],
-              }),
-            ),
-          preview: () => Effect.die("unused"),
-        },
-        (handler) => Effect.promise(() => handler(put(saveBody))),
-      )
-      assert.strictEqual(invalid.status, 422)
-      assert.deepStrictEqual(
-        (yield* Effect.promise(() => invalid.json())).issues[0].code,
-        "unresolved-label",
-      )
-
-      const malformed = yield* withHandler(
-        {
-          load: () => Effect.die("unused"),
-          save: () => Effect.die("must not run"),
-          preview: () => Effect.die("unused"),
-        },
-        (handler) => Effect.promise(() => handler(put({ expectedRevision: -1 }))),
-      )
-      assert.strictEqual(malformed.status, 400)
-
-      const crossOrigin = yield* withHandler(
-        {
-          load: () => Effect.die("unused"),
-          save: () => Effect.die("must not run"),
-          preview: () => Effect.die("unused"),
-        },
-        (handler) =>
-          Effect.promise(() =>
-            handler(
-              new Request(`https://janitor.example/repositories/${repositoryId}/rules`, {
-                method: "PUT",
-                headers: { "sec-fetch-site": "cross-site", "content-type": "application/json" },
-                body: JSON.stringify(saveBody),
-              }),
+        const crossOrigin = yield* Effect.promise(() =>
+          handler(
+            request(
+              "POST",
+              `${base}/rules`,
+              { labelId: "11", policyId, onNoMatch: "preserve" },
+              "cross-site",
             ),
           ),
-      )
-      assert.strictEqual(crossOrigin.status, 403)
-    }),
-  )
-
-  it.effect("lists repositories and reconciliations", () =>
-    withHandler(
-      {
-        load: () => Effect.die("unused"),
-        save: () => Effect.die("unused"),
-        preview: () => Effect.die("unused"),
-      },
-      (handler) =>
-        Effect.gen(function* () {
-          const repositories = yield* Effect.promise(() =>
-            handler(new Request("https://janitor.example/repositories")),
-          )
-          assert.strictEqual(repositories.status, 200)
-          const rows = yield* Effect.promise(() => repositories.json())
-          assert.deepStrictEqual(
-            rows.map((row: { repo: string }) => row.repo),
-            ["one"],
-          )
-          const reconciliations = yield* Effect.promise(() =>
-            handler(
-              new Request(`https://janitor.example/repositories/${repositoryId}/reconciliations`),
-            ),
-          )
-          assert.strictEqual(reconciliations.status, 200)
-          const body = yield* Effect.promise(() => reconciliations.json())
-          assert.strictEqual(body[0].outcome, "evaluated")
-          assert.strictEqual(body[0].snapshotGeneration, "3")
-        }),
+        )
+        assert.strictEqual(crossOrigin.status, 403)
+      }),
     ),
   )
 })

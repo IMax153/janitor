@@ -183,20 +183,27 @@ export const Condition: Schema.Codec<Condition, unknown> = Schema.suspend(
 
 // AUTHORING FORM
 
+/** Distributes over a union, unlike a bare `Omit`, and makes the defaulted key optional. */
+type Authored<T> = T extends { readonly _tag: string }
+  ? T extends { readonly caseSensitive: boolean }
+    ? Omit<T, "_tag" | "caseSensitive"> & { readonly caseSensitive?: boolean }
+    : Omit<T, "_tag">
+  : never
+
 export type ItemConditionSource =
   | { readonly all: ReadonlyArray<ItemConditionSource> }
   | { readonly any: ReadonlyArray<ItemConditionSource> }
   | { readonly not: ItemConditionSource }
-  | Omit<TextPredicate<string>, "_tag">
-  | Omit<FlagPredicate<string>, "_tag">
+  | Authored<TextPredicate<string>>
+  | Authored<FlagPredicate<string>>
 
 export type ConditionSource =
   | { readonly all: ReadonlyArray<ConditionSource> }
   | { readonly any: ReadonlyArray<ConditionSource> }
   | { readonly not: ConditionSource }
-  | Omit<TextPredicate<FactName>, "_tag">
-  | Omit<FlagPredicate<FactName>, "_tag">
-  | Omit<LabelSetPredicate<FactName>, "_tag">
+  | Authored<TextPredicate<FactName>>
+  | Authored<FlagPredicate<FactName>>
+  | Authored<LabelSetPredicate<FactName>>
   | { readonly some: FactName; readonly where: ItemConditionSource }
   | { readonly every: FactName; readonly where: ItemConditionSource }
   | { readonly none: FactName; readonly where: ItemConditionSource }

@@ -1,5 +1,5 @@
 import { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
-import { RulesetPreparation, RulesetRevision } from "@janitor/domain/Labeling/Ruleset"
+import { LabelingRevision, Preparation } from "@janitor/domain/Labeling/Policy/Configuration"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
@@ -14,12 +14,12 @@ export class RulesetActivationError extends Data.TaggedError("RulesetActivationE
   readonly message: string
 }> {}
 
-const RevisionFromText = Schema.FiniteFromString.pipe(Schema.decodeTo(RulesetRevision))
+const RevisionFromText = Schema.FiniteFromString.pipe(Schema.decodeTo(LabelingRevision))
 
 const PendingRow = Schema.Struct({
   repository_id: GitHubRepositoryDatabaseId,
   configured_revision: RevisionFromText,
-  required_tracks: RulesetPreparation,
+  required_tracks: Preparation,
 })
 
 const PromotedRow = Schema.Struct({ repository_id: GitHubRepositoryDatabaseId })
@@ -36,7 +36,7 @@ export class RulesetActivation extends Context.Service<
     /** Returns the revision that became active, if promotion happened now. */
     readonly promote: (
       repositoryId: GitHubRepositoryDatabaseId,
-    ) => Effect.Effect<Option.Option<RulesetRevision>, RulesetActivationError>
+    ) => Effect.Effect<Option.Option<LabelingRevision>, RulesetActivationError>
     /** Promotes every repository whose configured revision is ready. Returns how many. */
     readonly promoteAll: Effect.Effect<number, RulesetActivationError>
   }
@@ -60,10 +60,10 @@ export class RulesetActivation extends Context.Service<
     const promoteReady = (repositoryId: Option.Option<GitHubRepositoryDatabaseId>) =>
       sql`
         WITH candidate AS (
-          SELECT r.repository_id, r.configured_revision, v.required_tracks
+          SELECT r.repository_id, r.configured_revision, c.preparation AS required_tracks
           FROM labeling_repository_rules r
-          JOIN labeling_ruleset_revision v
-            ON v.repository_id = r.repository_id AND v.revision = r.configured_revision
+          JOIN labeling_configuration c
+            ON c.repository_id = r.repository_id AND c.revision = r.configured_revision
           WHERE r.active_revision IS DISTINCT FROM r.configured_revision
             AND (${Option.getOrNull(repositoryId)}::text IS NULL
                  OR r.repository_id = ${Option.getOrNull(repositoryId)})

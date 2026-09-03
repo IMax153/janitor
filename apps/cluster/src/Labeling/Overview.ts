@@ -7,8 +7,8 @@ import {
   ReconciliationOutcome,
   type RepositoryOverview,
 } from "@janitor/domain/Labeling/Reconciliation"
-import { Plan } from "@janitor/domain/Labeling/Evaluation"
-import { RulesetRevision } from "@janitor/domain/Labeling/Ruleset"
+import { LabelingRevision } from "@janitor/domain/Labeling/Policy/Configuration"
+import { Plan } from "@janitor/domain/Labeling/Policy/Plan"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
@@ -22,7 +22,7 @@ export class LabelingOverviewError extends Data.TaggedError("LabelingOverviewErr
   readonly message: string
 }> {}
 
-const RevisionFromText = Schema.FiniteFromString.pipe(Schema.decodeTo(RulesetRevision))
+const RevisionFromText = Schema.FiniteFromString.pipe(Schema.decodeTo(LabelingRevision))
 
 const RepositoryRow = Schema.Struct({
   repository_id: GitHubRepositoryDatabaseId,
