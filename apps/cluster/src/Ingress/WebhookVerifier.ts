@@ -36,9 +36,7 @@ export interface WebhookVerifierConfig {
 
 const Signature = Schema.String.check(Schema.isPattern(/^sha256=[0-9a-f]{64}$/i))
 
-const make = Effect.fnUntraced(function* (config: Config.Wrap<WebhookVerifierConfig>) {
-  const { secret } = yield* Config.unwrap(config)
-
+const make = Effect.fnUntraced(function* ({ secret }: WebhookVerifierConfig) {
   const decodeSignature = Schema.decodeEffect(Signature)
 
   const key = yield* Effect.promise(() =>
@@ -74,6 +72,11 @@ const make = Effect.fnUntraced(function* (config: Config.Wrap<WebhookVerifierCon
   }
 })
 
+/** Builds the verifier from an already resolved secret. */
+export const layerFrom = (config: WebhookVerifierConfig): Layer.Layer<WebhookVerifier> =>
+  Layer.effect(WebhookVerifier, make(config))
+
 export const layer = (
   config: Config.Wrap<WebhookVerifierConfig>,
-): Layer.Layer<WebhookVerifier, Config.ConfigError> => Layer.effect(WebhookVerifier, make(config))
+): Layer.Layer<WebhookVerifier, Config.ConfigError> =>
+  Layer.effect(WebhookVerifier, Effect.flatMap(Config.unwrap(config), make))

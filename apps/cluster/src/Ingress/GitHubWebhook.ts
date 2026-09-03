@@ -22,6 +22,7 @@ import * as GitHubEventQueue from "../GitHub/EventQueue.ts"
 import * as GitHubPayloadStore from "../GitHub/PayloadStore.ts"
 import { GitHubWebhookDeliveryId } from "@janitor/domain/GitHub/Id"
 import * as Encoding from "effect/Encoding"
+import * as Redacted from "effect/Redacted"
 import * as DateTime from "effect/DateTime"
 
 export const MAX_GITHUB_WEBHOOK_BODY_BYTES = 1024 * 1024
@@ -55,16 +56,22 @@ export class BodyTooLargeError extends Data.TaggedError("BodyTooLargeError")<{
   readonly maxBytes: number
 }> {}
 
-const GitHubWebhookVerifier = WebhookVerifier.layer({
-  secret: Config.Redacted("GITHUB_WEBHOOK_SECRET"),
-})
+/**
+ * Secrets the ingress needs. The Worker resolves them during init so Alchemy
+ * binds them at deploy time; layers built later cannot register bindings.
+ */
+export interface IngressSecrets {
+  readonly webhookSecret: Redacted.Redacted<string>
+  readonly cipher: PayloadCipher.PayloadCipherConfig
+}
 
-const GitHubPayloadCipher = PayloadCipher.layer(
-  PayloadCipher.config({
+export const ingressSecrets: Config.Wrap<IngressSecrets> = {
+  webhookSecret: Config.Redacted("GITHUB_WEBHOOK_SECRET"),
+  cipher: PayloadCipher.config({
     key: "GITHUB_WEBHOOK_PAYLOAD_KEY",
     keyId: "GITHUB_WEBHOOK_PAYLOAD_KEY_ID",
   }),
-)
+}
 
 export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
   Effect.gen(function* () {
@@ -265,11 +272,12 @@ export const GitHubWebhookRoutesLayerNoDeps = Layer.unwrap(
   }),
 )
 
-export const GitHubWebHookRoutesLayer = GitHubWebhookRoutesLayerNoDeps.pipe(
-  Layer.provide([
-    GitHubEventQueue.layer,
-    GitHubPayloadStore.layer,
-    GitHubPayloadCipher,
-    GitHubWebhookVerifier,
-  ]),
-)
+export const makeGitHubWebHookRoutesLayer = (secrets: IngressSecrets) =>
+  GitHubWebhookRoutesLayerNoDeps.pipe(
+    Layer.provide([
+      GitHubEventQueue.layer,
+      GitHubPayloadStore.layer,
+      PayloadCipher.layerFrom(secrets.cipher),
+      WebhookVerifier.layerFrom({ secret: secrets.webhookSecret }),
+    ]),
+  )

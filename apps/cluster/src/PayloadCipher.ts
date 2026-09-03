@@ -145,14 +145,12 @@ export const make = Effect.fnUntraced(function* ({ key, keyId }: PayloadCipherKe
   return { encrypt, decrypt }
 })
 
+/** Builds the cipher from an already resolved and validated config. */
+export const layerFrom = ({ key, keyId }: PayloadCipherConfig): Layer.Layer<PayloadCipher> =>
+  // The config schema already enforces the key length; a failure here is a defect.
+  Layer.effect(PayloadCipher, make({ key: Redacted.value(key), keyId }).pipe(Effect.orDie))
+
 export const layer = (
   config: Config.Wrap<PayloadCipherConfig>,
 ): Layer.Layer<PayloadCipher, Config.ConfigError> =>
-  Layer.effect(
-    PayloadCipher,
-    Effect.gen(function* () {
-      const { key, keyId } = yield* Config.unwrap(config)
-      // The config schema already enforces the key length; a failure here is a defect.
-      return yield* make({ key: Redacted.value(key), keyId }).pipe(Effect.orDie)
-    }),
-  )
+  Layer.unwrap(Effect.map(Config.unwrap(config), layerFrom))

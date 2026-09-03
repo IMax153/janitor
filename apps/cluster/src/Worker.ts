@@ -11,9 +11,13 @@ import * as HttpPlatform from "effect/unstable/http/HttpPlatform"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import { GitHubEventsDeadLetterQueue, GitHubEventsQueue } from "./GitHub/EventQueue.ts"
 import { GitHubWebhookPayloadsBucket } from "./GitHub/PayloadStore.ts"
-import { RoutesLayer as WebhookRoutesLayer } from "./Ingress/Routes.ts"
+import { ingressSecrets } from "./Ingress/GitHubWebhook.ts"
+import { makeRoutesLayer } from "./Ingress/Routes.ts"
+import * as Config from "effect/Config"
 import * as PayloadCipher from "./PayloadCipher.ts"
+import * as Cause from "effect/Cause"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
+import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { JanitorHyperdrive } from "./Database.ts"
 import {
@@ -69,22 +73,16 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       url: hyperdrive.connectionString,
     })
 
-    const GitHubPayloadCipherLayer = PayloadCipher.layer(
-      PayloadCipher.config({
-        key: "GITHUB_WEBHOOK_PAYLOAD_KEY",
-        keyId: "GITHUB_WEBHOOK_PAYLOAD_KEY_ID",
-      }),
+    // Every secret is read here, during init, so Alchemy binds it at deploy
+    // time. The cluster layer is built lazily and cannot register bindings.
+    const secrets = yield* Config.unwrap(ingressSecrets)
+    const appCredentials = yield* Config.unwrap(
+      GitHubAppAuth.config({ appId: "GITHUB_APP_ID", privateKey: "GITHUB_APP_PRIVATE_KEY" }),
     )
+    const GitHubPayloadCipherLayer = PayloadCipher.layerFrom(secrets.cipher)
 
     const GitHubTransportLayer = GitHubTransport.layer.pipe(
-      Layer.provideMerge(
-        GitHubAppAuth.layer(
-          GitHubAppAuth.config({
-            appId: "GITHUB_APP_ID",
-            privateKey: "GITHUB_APP_PRIVATE_KEY",
-          }),
-        ),
-      ),
+      Layer.provideMerge(GitHubAppAuth.layerFrom(appCredentials)),
       Layer.provideMerge(GitHubBudget.layer),
       Layer.provide(FetchHttpClient.layer),
     )
@@ -166,10 +164,21 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       fileWebResponse: () => Effect.die("HttpPlatform.fileWebResponse not supported"),
     })
     const webhookRoutes = yield* HttpRouter.toHttpEffect(
-      WebhookRoutesLayer.pipe(Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer])),
+      makeRoutesLayer(secrets).pipe(Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer])),
     )
-    const webhooks = Effect.orElseSucceed(webhookRoutes, () =>
-      HttpServerResponse.empty({ status: 500 }),
+    // Route errors that know their response (400 for a malformed request,
+    // 404 for no route) become that response; anything else is a 500.
+    const webhooks = webhookRoutes.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("Webhook ingress failed", cause).pipe(
+          Effect.andThen(
+            HttpServerRespondable.toResponseOrElseDefect(
+              Cause.squash(cause),
+              HttpServerResponse.empty({ status: 500 }),
+            ),
+          ),
+        ),
+      ),
     )
 
     const handler = Effect.gen(function* () {

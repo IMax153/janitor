@@ -246,13 +246,14 @@ export const make = Effect.fnUntraced(function* (credentials: GitHubAppCredentia
   return { appJwt, installationToken, invalidateInstallationToken }
 })
 
+/** Builds the auth service from already resolved credentials. */
+export const layerFrom = (
+  credentials: GitHubAppCredentials,
+): Layer.Layer<GitHubAppAuth, never, HttpClient.HttpClient> =>
+  // An unusable private key is a deployment defect, not a runtime condition.
+  Layer.effect(GitHubAppAuth, make(credentials).pipe(Effect.orDie))
+
 export const layer = (
   config: Config.Wrap<GitHubAppCredentials>,
 ): Layer.Layer<GitHubAppAuth, Config.ConfigError, HttpClient.HttpClient> =>
-  Layer.effect(
-    GitHubAppAuth,
-    Effect.flatMap(Config.unwrap(config), (credentials) =>
-      // An unusable private key is a deployment defect, not a runtime condition.
-      make(credentials).pipe(Effect.orDie),
-    ),
-  )
+  Layer.unwrap(Effect.map(Config.unwrap(config), layerFrom))
