@@ -139,11 +139,33 @@ const foldSyncOutMessage =
     }
   }
 
+/** Toast copy for what the repository page reports. */
+export const repositoriesToastFor = Match.type<Repositories.OutMessage>().pipe(
+  Match.withReturnType<Toast.ShowInput<ToastPayload>>(),
+  Match.tagsExhaustive({
+    Notified: ({ title, description }) => ({ variant: "Success", payload: { title, description } }),
+    Failed: ({ title, reason }) => ({ variant: "Error", payload: { title, description: reason } }),
+  }),
+)
+
+const foldRepositoriesOutMessage =
+  (outMessage: Repositories.OutMessage): Update.Step<Model, Message, AppServices> =>
+  (model) => {
+    const shown = AppToast.show(model.toast, repositoriesToastFor(outMessage))
+    return {
+      model: evo(model, { toast: () => shown.model }),
+      commands: Command.mapMessages(shown.commands, (message) =>
+        Message.GotToastMessage({ message }),
+      ),
+    }
+  }
+
 const foldRepositories = Update.foldChild({
   update: Repositories.update,
   read: (model: Model) => Option.some(model.repositories),
   write: (model, next) => evo(model, { repositories: () => next }),
   toParentMessage: (message) => Message.GotRepositoriesMessage({ message }),
+  foldOutMessage: foldRepositoriesOutMessage,
 })
 
 const foldSyncButton = Update.foldChild({

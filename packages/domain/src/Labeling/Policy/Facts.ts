@@ -179,3 +179,71 @@ export const snapshotFacts = (entity: EntityFields): FactSnapshot => {
   }
   return { kind: entity.kind, facts }
 }
+
+// CATALOG DESCRIPTION
+
+/** What editors need to offer completion: generated here so it cannot drift. */
+export const FactDescription = Schema.Struct({
+  name: FactName,
+  type: Schema.Literals(["Text", "Flag", "LabelSet", "Collection"]),
+  kinds: Schema.Array(GitHubEntityKind),
+  track: FactTrack,
+  description: Schema.String,
+  operators: Schema.Array(Schema.String),
+  /** Item fields with their operators, for collection facts. */
+  fields: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      type: ItemFieldType,
+      operators: Schema.Array(Schema.String),
+    }),
+  ),
+}).annotate({ identifier: "FactDescription" })
+export type FactDescription = typeof FactDescription.Type
+
+export const textOperators = [
+  "equals",
+  "notEquals",
+  "contains",
+  "matchesGlob",
+  "in",
+  "isEmpty",
+  "notEmpty",
+]
+export const flagOperators = ["is"]
+export const labelSetOperators = ["has", "isEmpty", "notEmpty"]
+export const quantifiers = ["some", "every", "none"]
+
+const operatorsFor = (type: FactType["_tag"] | ItemFieldType): ReadonlyArray<string> => {
+  switch (type) {
+    case "Text":
+      return textOperators
+    case "Flag":
+      return flagOperators
+    case "LabelSet":
+      return labelSetOperators
+    case "Collection":
+      return quantifiers
+  }
+}
+
+export const describeCatalog = (): ReadonlyArray<FactDescription> =>
+  factNames.map((name) => {
+    const definition = FactCatalog[name]
+    return {
+      name,
+      type: definition.type._tag,
+      kinds: definition.kinds,
+      track: definition.track,
+      description: definition.description,
+      operators: operatorsFor(definition.type._tag),
+      fields:
+        definition.type._tag === "Collection"
+          ? Object.entries(definition.type.fields).map(([field, type]) => ({
+              name: field,
+              type,
+              operators: operatorsFor(type),
+            }))
+          : [],
+    }
+  })

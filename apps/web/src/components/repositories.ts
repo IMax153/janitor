@@ -5,6 +5,7 @@ import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
 import * as HttpClient from "effect/unstable/http/HttpClient"
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
 import * as HttpIncomingMessage from "effect/unstable/http/HttpIncomingMessage"
 import * as FoldkitCommand from "foldkit/command"
@@ -14,124 +15,42 @@ import { evo } from "foldkit/struct"
 import * as Submodel from "foldkit/submodel"
 import * as Subscription from "foldkit/subscription"
 import * as Update from "foldkit/update"
+import * as Button from "@/components/ui/button"
+import * as PolicyEditor from "@/components/policy-editor"
+import * as RuleEditor from "@/components/rule-editor"
+import * as TestBench from "@/components/test-bench"
+import {
+  CATALOG_ENDPOINT,
+  ConfigurationView,
+  configurationEndpoint,
+  describePlan,
+  describeRevision,
+  FactDescription,
+  labelName,
+  PolicyDetail,
+  policyEndpoint,
+  policyName,
+  ReconciliationRecord,
+  reconciliationsEndpoint,
+  REPOSITORIES_ENDPOINT,
+  RepositoryOverview,
+  ruleEndpoint,
+} from "@/components/labeling-wire"
 import { cn } from "@/lib/utils"
 
-// CONSTANTS
+export type {
+  ConfigurationView,
+  PolicyDetail,
+  ReconciliationRecord,
+  RepositoryOverview,
+} from "@/components/labeling-wire"
 
-export const REPOSITORIES_ENDPOINT = "/api/v1/repositories"
-export const configurationEndpoint = (repositoryId: string) =>
-  `${REPOSITORIES_ENDPOINT}/${encodeURIComponent(repositoryId)}/configuration`
-export const reconciliationsEndpoint = (repositoryId: string) =>
-  `${REPOSITORIES_ENDPOINT}/${encodeURIComponent(repositoryId)}/reconciliations`
+// CONSTANTS
 
 /** How often the selected repository is refreshed while the page is open. */
 export const POLL_INTERVAL = Duration.seconds(10)
 
-// WIRE SCHEMA
-//
-// Mirrors `@janitor/domain/Labeling/*`. See sync-button.ts for why the
-// schemas are copied rather than imported.
-
-export const RepositoryOverview = Schema.Struct({
-  repositoryId: Schema.String,
-  owner: Schema.String,
-  repo: Schema.String,
-  enabled: Schema.Boolean,
-  access: Schema.Literals(["accessible", "suspect", "lost"]),
-  configuredRevision: Schema.NullOr(Schema.Int),
-  activeRevision: Schema.NullOr(Schema.Int),
-})
-export type RepositoryOverview = typeof RepositoryOverview.Type
-
-export const PolicyRecord = Schema.Struct({
-  policyId: Schema.String,
-  repositoryId: Schema.String,
-  name: Schema.String,
-  target: Schema.Literals(["issue", "pull_request"]),
-  description: Schema.String,
-  publishedVersionId: Schema.NullOr(Schema.String),
-  publishedRevision: Schema.NullOr(Schema.Int),
-  version: Schema.Int,
-  createdAt: Schema.DateTimeUtc,
-  updatedAt: Schema.DateTimeUtc,
-})
-export type PolicyRecord = typeof PolicyRecord.Type
-
-export const RuleRecord = Schema.Struct({
-  id: Schema.String,
-  repositoryId: Schema.String,
-  labelId: Schema.String,
-  policyId: Schema.String,
-  onNoMatch: Schema.Literals(["ensure-absent", "preserve"]),
-  group: Schema.NullOr(Schema.String),
-  priority: Schema.Int,
-  enabled: Schema.Boolean,
-  labelStatus: Schema.Literals(["valid", "missing"]),
-  version: Schema.Int,
-  createdAt: Schema.DateTimeUtc,
-  updatedAt: Schema.DateTimeUtc,
-})
-export type RuleRecord = typeof RuleRecord.Type
-
-export const Plan = Schema.Struct({
-  rules: Schema.Array(
-    Schema.Struct({
-      ruleId: Schema.String,
-      outcome: Schema.Literals(["match", "no-match", "unknown", "not-applicable"]),
-      selected: Schema.Boolean,
-    }),
-  ),
-  actions: Schema.Array(
-    Schema.Struct({
-      labelId: Schema.String,
-      action: Schema.Literals(["add", "remove"]),
-      ruleId: Schema.String,
-    }),
-  ),
-})
-export type Plan = typeof Plan.Type
-
-export const SynchronizedLabel = Schema.Struct({
-  labelId: Schema.String,
-  name: Schema.String,
-  availability: Schema.Literals(["available", "suspect", "unavailable"]),
-})
-export type SynchronizedLabel = typeof SynchronizedLabel.Type
-
-export const SyncFreshness = Schema.Literals([
-  "projected",
-  "verified",
-  "syncing",
-  "stale",
-  "blocked",
-])
-
-export const ConfigurationView = Schema.Struct({
-  repositoryId: Schema.String,
-  configuredRevision: Schema.Int,
-  activeRevision: Schema.NullOr(Schema.Int),
-  pendingTracks: Schema.Array(Schema.String),
-  policies: Schema.Array(PolicyRecord),
-  rules: Schema.Array(RuleRecord),
-  labels: Schema.Array(SynchronizedLabel),
-  labelFreshness: SyncFreshness,
-})
-export type ConfigurationView = typeof ConfigurationView.Type
-
-export const ReconciliationRecord = Schema.Struct({
-  repositoryId: Schema.String,
-  number: Schema.Int,
-  snapshotGeneration: Schema.String,
-  rulesRevision: Schema.Int,
-  coveredSequence: Schema.String,
-  fingerprint: Schema.String,
-  createdAt: Schema.DateTimeUtc,
-  outcome: Schema.NullOr(Schema.Literals(["evaluated", "superseded", "not-qualified", "failed"])),
-  detail: Schema.NullOr(Schema.String),
-  plan: Schema.NullOr(Plan),
-  completedAt: Schema.NullOr(Schema.DateTimeUtc),
-})
-export type ReconciliationRecord = typeof ReconciliationRecord.Type
+// MODEL
 
 export const RepositoryDetail = Schema.Struct({
   configuration: ConfigurationView,
@@ -139,14 +58,31 @@ export const RepositoryDetail = Schema.Struct({
 })
 export type RepositoryDetail = typeof RepositoryDetail.Type
 
-// MODEL
+/** What the panel above the tables shows. */
+export const Panel = Schema.Union([
+  Schema.TaggedStruct("Closed", {}),
+  Schema.TaggedStruct("LoadingPolicy", { policyId: Schema.String }),
+  Schema.TaggedStruct("PolicyEditor", { editor: PolicyEditor.Model }),
+  Schema.TaggedStruct("RuleEditor", { editor: RuleEditor.Model }),
+  Schema.TaggedStruct("TestBench", { bench: TestBench.Model }),
+])
+export type Panel = typeof Panel.Type
 
 export const Model = Schema.Struct({
   repositories: Schema.Option(Schema.Array(RepositoryOverview)),
   repositoriesError: Schema.Option(Schema.String),
+  catalog: Schema.Array(FactDescription),
   selected: Schema.Option(Schema.String),
   detail: Schema.Option(RepositoryDetail),
   detailError: Schema.Option(Schema.String),
+  panel: Panel,
+  /** A row whose delete button was pressed once; the second press deletes. */
+  maybeConfirmingDelete: Schema.Option(
+    Schema.Union([
+      Schema.TaggedStruct("Policy", { policyId: Schema.String }),
+      Schema.TaggedStruct("Rule", { ruleId: Schema.String }),
+    ]),
+  ),
 })
 export type Model = typeof Model.Type
 
@@ -155,12 +91,38 @@ export type Model = typeof Model.Type
 export const Message = defineMessageUnion({
   GotRepositories: { repositories: Schema.Array(RepositoryOverview) },
   FailedRepositories: { reason: Schema.String },
+  GotCatalog: { catalog: Schema.Array(FactDescription) },
   Selected: { repositoryId: Schema.String },
   Polled: {},
   GotDetail: { repositoryId: Schema.String, detail: RepositoryDetail },
   FailedDetail: { repositoryId: Schema.String, reason: Schema.String },
+  ClickedNewPolicy: {},
+  ClickedEditPolicy: { policyId: Schema.String },
+  GotPolicyDetail: { detail: PolicyDetail },
+  FailedPolicyDetail: { reason: Schema.String },
+  ClickedTestPolicy: { policyId: Schema.String },
+  ClickedTestConfiguration: {},
+  ClickedDeletePolicy: { policyId: Schema.String, version: Schema.Int },
+  ClickedNewRule: {},
+  ClickedEditRule: { ruleId: Schema.String },
+  ClickedToggleRule: { ruleId: Schema.String },
+  ClickedDeleteRule: { ruleId: Schema.String, version: Schema.Int },
+  CompletedDelete: { what: Schema.String },
+  FailedDelete: { reason: Schema.String },
+  CompletedToggleRule: {},
+  FailedToggleRule: { reason: Schema.String },
+  GotPolicyEditorMessage: { message: PolicyEditor.Message },
+  GotRuleEditorMessage: { message: RuleEditor.Message },
+  GotTestBenchMessage: { message: TestBench.Message },
 })
 export type Message = typeof Message.Type
+
+/** What the shell needs to know to show toasts. */
+export const OutMessage = defineMessageUnion({
+  Notified: { title: Schema.String, description: Schema.String },
+  Failed: { title: Schema.String, reason: Schema.String },
+})
+export type OutMessage = typeof OutMessage.Type
 
 // COMMANDS
 
@@ -185,6 +147,15 @@ export const FetchRepositories = FoldkitCommand.define("FetchRepositories", {
   ),
 })
 
+/** The catalog is static; a failure leaves completion empty rather than blocking the page. */
+export const FetchCatalog = FoldkitCommand.define("FetchCatalog", {
+  messages: [Message.GotCatalog],
+  execute: getJson(CATALOG_ENDPOINT, Schema.Array(FactDescription)).pipe(
+    Effect.map((catalog) => Message.GotCatalog({ catalog })),
+    Effect.catch(() => Effect.succeed(Message.GotCatalog({ catalog: [] }))),
+  ),
+})
+
 export const FetchDetail = FoldkitCommand.define("FetchDetail", {
   args: { repositoryId: Schema.String },
   messages: [Message.GotDetail, Message.FailedDetail],
@@ -206,25 +177,262 @@ export const FetchDetail = FoldkitCommand.define("FetchDetail", {
     ),
 })
 
+export const FetchPolicyDetail = FoldkitCommand.define("FetchPolicyDetail", {
+  args: { repositoryId: Schema.String, policyId: Schema.String },
+  messages: [Message.GotPolicyDetail, Message.FailedPolicyDetail],
+  execute: ({ repositoryId, policyId }) =>
+    getJson(policyEndpoint(repositoryId, policyId), PolicyDetail).pipe(
+      Effect.map((detail) => Message.GotPolicyDetail({ detail })),
+      Effect.catch((error) =>
+        Effect.succeed(Message.FailedPolicyDetail({ reason: describe(error) })),
+      ),
+    ),
+})
+
+const MessageBody = Schema.Struct({ message: Schema.String })
+
+export const DeleteSubject = FoldkitCommand.define("DeleteSubject", {
+  args: { url: Schema.String, version: Schema.Int, what: Schema.String },
+  messages: [Message.CompletedDelete, Message.FailedDelete],
+  execute: ({ url, version, what }) =>
+    Effect.gen(function* () {
+      const response = yield* HttpClient.execute(
+        HttpClientRequest.make("DELETE")(`${url}?version=${version}`),
+      )
+      switch (response.status) {
+        case 204:
+          return Message.CompletedDelete({ what })
+        case 409: {
+          const { message } = yield* HttpIncomingMessage.schemaBodyJson(MessageBody)(response)
+          return Message.FailedDelete({ reason: message })
+        }
+        default:
+          return Message.FailedDelete({ reason: `Server answered ${response.status}` })
+      }
+    }).pipe(
+      Effect.catch((error) => Effect.succeed(Message.FailedDelete({ reason: describe(error) }))),
+    ),
+})
+
+export const ToggleRule = FoldkitCommand.define("ToggleRule", {
+  args: {
+    repositoryId: Schema.String,
+    ruleId: Schema.String,
+    version: Schema.Int,
+    enabled: Schema.Boolean,
+  },
+  messages: [Message.CompletedToggleRule, Message.FailedToggleRule],
+  execute: ({ repositoryId, ruleId, version, enabled }) =>
+    HttpClientRequest.patch(ruleEndpoint(repositoryId, ruleId)).pipe(
+      HttpClientRequest.bodyJson({ version, enabled }),
+      Effect.flatMap(HttpClient.execute),
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.map(() => Message.CompletedToggleRule()),
+      Effect.catch((error) =>
+        Effect.succeed(Message.FailedToggleRule({ reason: describe(error) })),
+      ),
+    ),
+})
+
 // INIT
 
-export type UpdateReturn = Update.Return<Model, Message, HttpClient.HttpClient>
+export type UpdateReturn = Update.ReturnWithOutMessage<
+  Model,
+  Message,
+  OutMessage,
+  HttpClient.HttpClient
+>
 
 export const init = (): UpdateReturn => ({
   model: Model.make(
     {
       repositories: Option.none(),
       repositoriesError: Option.none(),
+      catalog: [],
       selected: Option.none(),
       detail: Option.none(),
       detailError: Option.none(),
+      panel: { _tag: "Closed" },
+      maybeConfirmingDelete: Option.none(),
     },
     { disableChecks: true },
   ),
-  commands: [FetchRepositories()],
+  commands: [FetchRepositories(), FetchCatalog()],
 })
 
 // UPDATE
+
+type Step = Update.Return<Model, Message, HttpClient.HttpClient>
+
+const closed = (model: Model): Model =>
+  evo(model, {
+    panel: () => ({ _tag: "Closed" as const }),
+    maybeConfirmingDelete: () => Option.none(),
+  })
+
+const refresh = (model: Model) =>
+  Option.match(model.selected, {
+    onNone: () => [],
+    onSome: (repositoryId) => [FetchDetail({ repositoryId })],
+  })
+
+interface Loaded {
+  readonly repositoryId: string
+  readonly detail: RepositoryDetail
+}
+
+const loaded = (model: Model): Option.Option<Loaded> =>
+  Option.flatMap(model.selected, (repositoryId) =>
+    Option.map(model.detail, (detail) => ({ repositoryId, detail })),
+  )
+
+const openPolicyEditor = (model: Model, existing: Option.Option<PolicyDetail>): Model =>
+  Option.match(loaded(model), {
+    onNone: () => model,
+    onSome: ({ repositoryId, detail }) =>
+      evo(model, {
+        panel: () => ({
+          _tag: "PolicyEditor" as const,
+          editor: PolicyEditor.init({
+            repositoryId,
+            catalog: model.catalog,
+            policyNames: detail.configuration.policies.map((policy) => policy.name),
+            existing,
+          }),
+        }),
+      }),
+  })
+
+const openRuleEditor = (
+  model: Model,
+  existing: Option.Option<RuleEditor.Model["identity"]>,
+): Model =>
+  Option.match(loaded(model), {
+    onNone: () => model,
+    onSome: ({ repositoryId, detail }) => {
+      const rule = Option.flatMap(existing, (identity) =>
+        identity._tag === "Existing"
+          ? Option.fromNullishOr(
+              detail.configuration.rules.find((candidate) => candidate.id === identity.ruleId),
+            )
+          : Option.none(),
+      )
+      return evo(model, {
+        panel: () => ({
+          _tag: "RuleEditor" as const,
+          editor: RuleEditor.init({
+            repositoryId,
+            labels: detail.configuration.labels,
+            policies: detail.configuration.policies,
+            existing: rule,
+          }),
+        }),
+      })
+    },
+  })
+
+const openTestBench = (
+  model: Model,
+  subject: TestBench.Model["subject"],
+  title: string,
+): UpdateReturn =>
+  Option.match(loaded(model), {
+    onNone: () => ({ model }),
+    onSome: ({ repositoryId, detail }) => {
+      const bench = TestBench.init({
+        repositoryId,
+        subject,
+        title,
+        configuration: detail.configuration,
+      })
+      return {
+        model: evo(model, { panel: () => ({ _tag: "TestBench" as const, bench: bench.model }) }),
+        commands: FoldkitCommand.mapMessages(bench.commands, (message) =>
+          Message.GotTestBenchMessage({ message }),
+        ),
+      }
+    },
+  })
+
+const foldPolicyEditor = Update.foldChild({
+  update: PolicyEditor.update,
+  read: (model: Model) =>
+    model.panel._tag === "PolicyEditor" ? Option.some(model.panel.editor) : Option.none(),
+  write: (model, nextEditor) =>
+    evo(model, { panel: () => ({ _tag: "PolicyEditor" as const, editor: nextEditor }) }),
+  toParentMessage: (message) => Message.GotPolicyEditorMessage({ message }),
+  toParentOutMessage: (outMessage) =>
+    PolicyEditor.OutMessage.match<OutMessage | undefined>(outMessage, {
+      Saved: ({ detail, published }) =>
+        OutMessage.Notified({
+          title: published
+            ? `Published ${detail.policy.name}`
+            : `Saved ${detail.policy.name} as a draft`,
+          description: published
+            ? "Rules bound to it re-evaluate once synchronization verifies the tracks it needs."
+            : "Publish it to make it available to rules.",
+        }),
+      Cancelled: () => undefined,
+      SaveFailed: ({ reason }) => OutMessage.Failed({ title: "The policy was not saved", reason }),
+    }),
+  foldOutMessage: (outMessage) => (model) =>
+    PolicyEditor.OutMessage.match<Step>(outMessage, {
+      Saved: ({ published }) =>
+        published
+          ? { model: closed(model), commands: refresh(model) }
+          : { model, commands: refresh(model) },
+      Cancelled: () => ({ model: closed(model) }),
+      SaveFailed: () => ({ model }),
+    }),
+})
+
+const foldRuleEditor = Update.foldChild({
+  update: RuleEditor.update,
+  read: (model: Model) =>
+    model.panel._tag === "RuleEditor" ? Option.some(model.panel.editor) : Option.none(),
+  write: (model, nextEditor) =>
+    evo(model, { panel: () => ({ _tag: "RuleEditor" as const, editor: nextEditor }) }),
+  toParentMessage: (message) => Message.GotRuleEditorMessage({ message }),
+  toParentOutMessage: (outMessage) =>
+    RuleEditor.OutMessage.match<OutMessage | undefined>(outMessage, {
+      Saved: () =>
+        OutMessage.Notified({
+          title: "Rule saved",
+          description: "It takes effect once the revision activates.",
+        }),
+      Cancelled: () => undefined,
+      SaveFailed: ({ reason }) => OutMessage.Failed({ title: "The rule was not saved", reason }),
+    }),
+  foldOutMessage: (outMessage) => (model) =>
+    RuleEditor.OutMessage.match<Step>(outMessage, {
+      Saved: () => ({ model: closed(model), commands: refresh(model) }),
+      Cancelled: () => ({ model: closed(model) }),
+      SaveFailed: () => ({ model }),
+    }),
+})
+
+const foldTestBench = Update.foldChild({
+  update: TestBench.update,
+  read: (model: Model) =>
+    model.panel._tag === "TestBench" ? Option.some(model.panel.bench) : Option.none(),
+  write: (model, nextBench) =>
+    evo(model, { panel: () => ({ _tag: "TestBench" as const, bench: nextBench }) }),
+  toParentMessage: (message) => Message.GotTestBenchMessage({ message }),
+  foldOutMessage: (outMessage) => (model) =>
+    TestBench.OutMessage.match<Step>(outMessage, { Closed: () => ({ model: closed(model) }) }),
+})
+
+const confirmingPolicy = (model: Model, policyId: string) =>
+  Option.exists(
+    model.maybeConfirmingDelete,
+    (entry) => entry._tag === "Policy" && entry.policyId === policyId,
+  )
+
+const confirmingRule = (model: Model, ruleId: string) =>
+  Option.exists(
+    model.maybeConfirmingDelete,
+    (entry) => entry._tag === "Rule" && entry.ruleId === ruleId,
+  )
 
 export const update = (model: Model, message: Message): UpdateReturn =>
   Message.match<UpdateReturn>(message, {
@@ -242,29 +450,23 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           }
         : { model: next }
     },
-
     FailedRepositories: ({ reason }) => ({
       model: evo(model, { repositoriesError: () => Option.some(reason) }),
     }),
+    GotCatalog: ({ catalog }) => ({ model: evo(model, { catalog: () => catalog }) }),
 
     Selected: ({ repositoryId }) =>
       Option.contains(model.selected, repositoryId)
         ? { model }
         : {
-            model: evo(model, {
+            model: evo(closed(model), {
               selected: () => Option.some(repositoryId),
               detail: () => Option.none<RepositoryDetail>(),
               detailError: () => Option.none<string>(),
             }),
             commands: [FetchDetail({ repositoryId })],
           },
-
-    Polled: () =>
-      Option.match(model.selected, {
-        onNone: () => ({ model }),
-        onSome: (repositoryId) => ({ model, commands: [FetchDetail({ repositoryId })] }),
-      }),
-
+    Polled: () => ({ model, commands: refresh(model) }),
     // A late answer for a repository that is no longer selected is dropped.
     GotDetail: ({ repositoryId, detail }) =>
       Option.contains(model.selected, repositoryId)
@@ -275,11 +477,121 @@ export const update = (model: Model, message: Message): UpdateReturn =>
             }),
           }
         : { model },
-
     FailedDetail: ({ repositoryId, reason }) =>
       Option.contains(model.selected, repositoryId)
         ? { model: evo(model, { detailError: () => Option.some(reason) }) }
         : { model },
+
+    ClickedNewPolicy: () => ({ model: openPolicyEditor(model, Option.none()) }),
+    ClickedEditPolicy: ({ policyId }) =>
+      Option.match(model.selected, {
+        onNone: () => ({ model }),
+        onSome: (repositoryId) => ({
+          model: evo(model, { panel: () => ({ _tag: "LoadingPolicy" as const, policyId }) }),
+          commands: [FetchPolicyDetail({ repositoryId, policyId })],
+        }),
+      }),
+    GotPolicyDetail: ({ detail }) =>
+      model.panel._tag === "LoadingPolicy" && model.panel.policyId === detail.policy.policyId
+        ? { model: openPolicyEditor(model, Option.some(detail)) }
+        : { model },
+    FailedPolicyDetail: ({ reason }) => ({
+      model: closed(model),
+      outMessage: OutMessage.Failed({ title: "Could not open the policy", reason }),
+    }),
+    ClickedTestPolicy: ({ policyId }) =>
+      openTestBench(
+        model,
+        { _tag: "Policy", policyId },
+        Option.match(model.detail, {
+          onNone: () => policyId,
+          onSome: (detail) => `Policy ${policyName(detail.configuration.policies, policyId)}`,
+        }),
+      ),
+    ClickedTestConfiguration: () =>
+      openTestBench(model, { _tag: "Configuration" }, "Every rule of the configured revision"),
+    ClickedDeletePolicy: ({ policyId, version }) =>
+      confirmingPolicy(model, policyId)
+        ? Option.match(model.selected, {
+            onNone: () => ({ model }),
+            onSome: (repositoryId) => ({
+              model: evo(model, { maybeConfirmingDelete: () => Option.none() }),
+              commands: [
+                DeleteSubject({
+                  url: policyEndpoint(repositoryId, policyId),
+                  version,
+                  what: "policy",
+                }),
+              ],
+            }),
+          })
+        : {
+            model: evo(model, {
+              maybeConfirmingDelete: () => Option.some({ _tag: "Policy" as const, policyId }),
+            }),
+          },
+
+    ClickedNewRule: () => ({ model: openRuleEditor(model, Option.none()) }),
+    ClickedEditRule: ({ ruleId }) => ({
+      model: openRuleEditor(model, Option.some({ _tag: "Existing", ruleId, version: 0 })),
+    }),
+    ClickedToggleRule: ({ ruleId }) =>
+      Option.match(loaded(model), {
+        onNone: () => ({ model }),
+        onSome: ({ repositoryId, detail }) => {
+          const rule = detail.configuration.rules.find((candidate) => candidate.id === ruleId)
+          return rule === undefined
+            ? { model }
+            : {
+                model,
+                commands: [
+                  ToggleRule({
+                    repositoryId,
+                    ruleId,
+                    version: rule.version,
+                    enabled: !rule.enabled,
+                  }),
+                ],
+              }
+        },
+      }),
+    ClickedDeleteRule: ({ ruleId, version }) =>
+      confirmingRule(model, ruleId)
+        ? Option.match(model.selected, {
+            onNone: () => ({ model }),
+            onSome: (repositoryId) => ({
+              model: evo(model, { maybeConfirmingDelete: () => Option.none() }),
+              commands: [
+                DeleteSubject({ url: ruleEndpoint(repositoryId, ruleId), version, what: "rule" }),
+              ],
+            }),
+          })
+        : {
+            model: evo(model, {
+              maybeConfirmingDelete: () => Option.some({ _tag: "Rule" as const, ruleId }),
+            }),
+          },
+    CompletedDelete: ({ what }) => ({
+      model,
+      commands: refresh(model),
+      outMessage: OutMessage.Notified({
+        title: `Deleted the ${what}`,
+        description: "The configuration revision advanced.",
+      }),
+    }),
+    FailedDelete: ({ reason }) => ({
+      model,
+      outMessage: OutMessage.Failed({ title: "Nothing was deleted", reason }),
+    }),
+    CompletedToggleRule: () => ({ model, commands: refresh(model) }),
+    FailedToggleRule: ({ reason }) => ({
+      model,
+      outMessage: OutMessage.Failed({ title: "The rule was not changed", reason }),
+    }),
+
+    GotPolicyEditorMessage: ({ message }) => foldPolicyEditor(model, message),
+    GotRuleEditorMessage: ({ message }) => foldRuleEditor(model, message),
+    GotTestBenchMessage: ({ message }) => foldTestBench(model, message),
   })
 
 // SUBSCRIPTIONS
@@ -299,39 +611,46 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
 
 // VIEW
 
-/** One line per planned change, with label IDs resolved to names. */
-export const describePlan = (
-  plan: Plan,
-  labels: ReadonlyArray<SynchronizedLabel>,
-  rules: ReadonlyArray<RuleRecord>,
-  policies: ReadonlyArray<PolicyRecord>,
-): ReadonlyArray<string> => {
-  const name = (labelId: string) =>
-    labels.find((label) => label.labelId === labelId)?.name ?? labelId
-  const via = (ruleId: string) => {
-    const rule = rules.find((candidate) => candidate.id === ruleId)
-    const policy = policies.find((candidate) => candidate.policyId === rule?.policyId)
-    return policy?.name ?? ruleId
-  }
-  return plan.actions.map(
-    (action) => `${action.action} ${name(action.labelId)} (${via(action.ruleId)})`,
-  )
-}
-
-/** One line of status for the configured revision. */
-export const describeRevision = (view: ConfigurationView): string => {
-  if (view.configuredRevision === 0) return "Nothing configured"
-  if (view.activeRevision === view.configuredRevision) {
-    return `Revision ${view.configuredRevision} active`
-  }
-  const waiting = view.pendingTracks.length === 0 ? "promotion" : view.pendingTracks.join(", ")
-  return `Revision ${view.configuredRevision} waiting on ${waiting}`
-}
-
 const badgeClass = "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium"
+const cellClass = "py-1.5 pr-3 align-top"
+const headClass = "py-1 pr-3 text-left text-xs font-medium"
+const emptyClass = "text-muted-foreground rounded-md border border-dashed p-4 text-sm"
 
 const sectionTitle = <M>(h: HtmlBuilder<M>, text: string): Html =>
   h.h2([h.Class("text-sm font-semibold tracking-tight")], [text])
+
+const rowButton = (
+  h: HtmlBuilder<Message>,
+  label: string,
+  onClick: Message,
+  options: { readonly isDestructive?: boolean; readonly action?: string } = {},
+): Html =>
+  Button.view(
+    h,
+    { variant: options.isDestructive ? "destructive" : "ghost", size: "xs", onClick, label },
+    options.action === undefined ? [] : [h.DataAttribute("action", options.action)],
+  )
+
+const table = (
+  h: HtmlBuilder<Message>,
+  heads: ReadonlyArray<string>,
+  rows: ReadonlyArray<Html>,
+): Html =>
+  h.table(
+    [h.Class("w-full text-sm")],
+    [
+      h.thead(
+        [h.Class("text-muted-foreground")],
+        [
+          h.tr(
+            [],
+            heads.map((head) => h.th([h.Class(headClass)], [head])),
+          ),
+        ],
+      ),
+      h.tbody([], rows),
+    ],
+  )
 
 const repositoryList = (h: HtmlBuilder<Message>, model: Model): Html =>
   Option.match(model.repositories, {
@@ -345,26 +664,21 @@ const repositoryList = (h: HtmlBuilder<Message>, model: Model): Html =>
         ? h.div([h.Class("text-muted-foreground text-sm")], ["No repositories synchronized yet"])
         : h.ul(
             [h.Class("flex flex-col gap-1")],
-            repositories.map((repository) =>
-              h.li(
+            repositories.map((repository) => {
+              const isSelected = Option.contains(model.selected, repository.repositoryId)
+              return h.li(
                 [],
                 [
                   h.button(
                     [
                       h.Type("button"),
                       h.DataAttribute("repository-id", repository.repositoryId),
-                      h.DataAttribute(
-                        "state",
-                        Option.contains(model.selected, repository.repositoryId)
-                          ? "selected"
-                          : "idle",
-                      ),
+                      h.DataAttribute("state", isSelected ? "selected" : "idle"),
                       h.OnClick(Message.Selected({ repositoryId: repository.repositoryId })),
                       h.Class(
                         cn(
                           "flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent",
-                          Option.contains(model.selected, repository.repositoryId) &&
-                            "bg-accent font-medium",
+                          isSelected && "bg-accent font-medium",
                         ),
                       ),
                     ],
@@ -377,139 +691,214 @@ const repositoryList = (h: HtmlBuilder<Message>, model: Model): Html =>
                     ],
                   ),
                 ],
-              ),
-            ),
-          ),
-  })
-
-const policiesSection = (h: HtmlBuilder<Message>, view: ConfigurationView): Html =>
-  h.section(
-    [h.Class("flex flex-col gap-2")],
-    [
-      sectionTitle(h, "Policies"),
-      h.div([h.Class("text-muted-foreground text-sm")], [describeRevision(view)]),
-      view.policies.length === 0
-        ? h.div([h.Class("text-muted-foreground text-sm")], ["No policies yet"])
-        : h.ul(
-            [h.Class("flex flex-col gap-2")],
-            view.policies.map((policy) =>
-              h.li(
-                [h.Class("flex items-center justify-between gap-2 rounded-md border p-3 text-sm")],
-                [
-                  h.div(
-                    [h.Class("flex flex-col")],
-                    [
-                      h.span([h.Class("font-medium")], [policy.name]),
-                      h.span(
-                        [h.Class("text-muted-foreground text-xs")],
-                        [policy.target === "pull_request" ? "Pull requests" : "Issues"],
-                      ),
-                    ],
-                  ),
-                  h.span(
-                    [h.Class(cn(badgeClass, policy.publishedRevision === null && "opacity-60"))],
-                    [
-                      policy.publishedRevision === null
-                        ? "draft"
-                        : `published v${policy.publishedRevision}`,
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-    ],
-  )
-
-const rulesSection = (h: HtmlBuilder<Message>, view: ConfigurationView): Html =>
-  h.section(
-    [h.Class("flex flex-col gap-2")],
-    [
-      sectionTitle(h, "Rules"),
-      view.rules.length === 0
-        ? h.div([h.Class("text-muted-foreground text-sm")], ["No rules yet"])
-        : h.ul(
-            [h.Class("flex flex-col gap-2")],
-            view.rules.map((rule) => {
-              const label = view.labels.find((candidate) => candidate.labelId === rule.labelId)
-              const policy = view.policies.find((candidate) => candidate.policyId === rule.policyId)
-              return h.li(
-                [
-                  h.Class(
-                    cn(
-                      "flex items-center justify-between gap-2 rounded-md border p-3 text-sm",
-                      !rule.enabled && "opacity-60",
-                    ),
-                  ),
-                ],
-                [
-                  h.div(
-                    [h.Class("flex items-center gap-2")],
-                    [
-                      h.span([h.Class(badgeClass)], [label?.name ?? rule.labelId]),
-                      h.span([h.Class("text-muted-foreground")], ["when"]),
-                      h.span([h.Class("font-medium")], [policy?.name ?? rule.policyId]),
-                    ],
-                  ),
-                  h.div(
-                    [h.Class("text-muted-foreground text-xs")],
-                    [
-                      [
-                        rule.onNoMatch === "ensure-absent" ? "removed on miss" : "kept on miss",
-                        rule.group === null ? "" : `group ${rule.group} priority ${rule.priority}`,
-                        rule.enabled ? "" : "disabled",
-                      ]
-                        .filter((part) => part.length > 0)
-                        .join(" · "),
-                    ],
-                  ),
-                ],
               )
             }),
           ),
+  })
+
+const policyRow = (
+  h: HtmlBuilder<Message>,
+  model: Model,
+  view: ConfigurationView,
+  policy: ConfigurationView["policies"][number],
+): Html => {
+  const bound = view.rules.filter((rule) => rule.policyId === policy.policyId).length
+  const confirming = confirmingPolicy(model, policy.policyId)
+  return h.tr(
+    [h.Class("border-t"), h.DataAttribute("policy-id", policy.policyId)],
+    [
+      h.td(
+        [h.Class(cellClass)],
+        [
+          h.div([h.Class("font-medium")], [policy.name]),
+          policy.description === ""
+            ? h.empty
+            : h.div([h.Class("text-muted-foreground text-xs")], [policy.description]),
+        ],
+      ),
+      h.td([h.Class(cellClass)], [policy.target === "pull_request" ? "Pull requests" : "Issues"]),
+      h.td(
+        [h.Class(cellClass)],
+        [
+          h.span(
+            [h.Class(cn(badgeClass, policy.publishedRevision === null && "opacity-60"))],
+            [policy.publishedRevision === null ? "draft" : `v${policy.publishedRevision}`],
+          ),
+        ],
+      ),
+      h.td(
+        [h.Class(cn(cellClass, "text-muted-foreground"))],
+        [bound === 0 ? "no rules" : `${bound} rule${bound === 1 ? "" : "s"}`],
+      ),
+      h.td(
+        [h.Class(cn(cellClass, "text-right whitespace-nowrap"))],
+        [
+          rowButton(h, "Edit", Message.ClickedEditPolicy({ policyId: policy.policyId }), {
+            action: "edit-policy",
+          }),
+          policy.publishedRevision === null
+            ? h.empty
+            : rowButton(h, "Test", Message.ClickedTestPolicy({ policyId: policy.policyId })),
+          rowButton(
+            h,
+            confirming ? "Confirm delete" : "Delete",
+            Message.ClickedDeletePolicy({ policyId: policy.policyId, version: policy.version }),
+            { isDestructive: confirming, action: "delete-policy" },
+          ),
+        ],
+      ),
     ],
   )
+}
 
-const labelsSection = (h: HtmlBuilder<Message>, view: ConfigurationView): Html =>
+const policiesSection = (h: HtmlBuilder<Message>, model: Model, view: ConfigurationView): Html =>
   h.section(
     [h.Class("flex flex-col gap-2")],
     [
-      sectionTitle(h, `Labels (${view.labelFreshness})`),
-      view.labels.length === 0
-        ? h.div([h.Class("text-muted-foreground text-sm")], ["No labels synchronized"])
-        : h.div(
-            [h.Class("flex flex-wrap gap-1")],
-            view.labels.map((label) =>
-              h.span(
-                [
-                  h.Class(
-                    cn(badgeClass, label.availability !== "available" && "line-through opacity-60"),
-                  ),
-                  h.Title(label.availability),
-                ],
-                [label.name],
+      h.div(
+        [h.Class("flex items-center justify-between gap-2")],
+        [
+          h.div(
+            [h.Class("flex flex-col")],
+            [
+              sectionTitle(h, "Policies"),
+              h.span([h.Class("text-muted-foreground text-xs")], [describeRevision(view)]),
+            ],
+          ),
+          h.div(
+            [h.Class("flex items-center gap-1")],
+            [
+              view.rules.length === 0
+                ? h.empty
+                : rowButton(h, "Test configuration", Message.ClickedTestConfiguration()),
+              Button.view(
+                h,
+                {
+                  variant: "outline",
+                  size: "xs",
+                  onClick: Message.ClickedNewPolicy(),
+                  label: "New policy",
+                },
+                [h.DataAttribute("action", "new-policy")],
               ),
-            ),
+            ],
+          ),
+        ],
+      ),
+      view.policies.length === 0
+        ? h.div(
+            [h.Class(emptyClass)],
+            [
+              "No policies yet. A policy decides when something is true about an issue or pull request.",
+            ],
+          )
+        : table(
+            h,
+            ["Name", "Applies to", "Published", "Bound by", ""],
+            view.policies.map((policy) => policyRow(h, model, view, policy)),
           ),
     ],
   )
 
-const planCell = (
+const ruleRow = (
   h: HtmlBuilder<Message>,
-  row: ReconciliationRecord,
+  model: Model,
   view: ConfigurationView,
+  rule: ConfigurationView["rules"][number],
 ): Html => {
-  if (row.plan === null) return h.span([h.Class("text-muted-foreground")], [""])
-  const lines = describePlan(row.plan, view.labels, view.rules, view.policies)
-  return lines.length === 0
-    ? h.span([h.Class("text-muted-foreground")], ["no changes"])
-    : h.ul(
-        [h.Class("flex flex-col gap-0.5")],
-        lines.map((line, index) =>
-          h.li([h.DataAttribute("action", row.plan?.actions[index]?.action ?? "")], [line]),
-        ),
-      )
+  const confirming = confirmingRule(model, rule.id)
+  return h.tr(
+    [h.Class(cn("border-t", !rule.enabled && "opacity-60")), h.DataAttribute("rule-id", rule.id)],
+    [
+      h.td(
+        [h.Class(cellClass)],
+        [
+          h.span(
+            [h.Class(cn(badgeClass, rule.labelStatus === "missing" && "line-through"))],
+            [labelName(view.labels, rule.labelId)],
+          ),
+        ],
+      ),
+      h.td([h.Class(cellClass)], [policyName(view.policies, rule.policyId)]),
+      h.td(
+        [h.Class(cn(cellClass, "text-muted-foreground"))],
+        [rule.onNoMatch === "ensure-absent" ? "remove label" : "leave alone"],
+      ),
+      h.td(
+        [h.Class(cn(cellClass, "text-muted-foreground"))],
+        [rule.group === null ? "" : `${rule.group} · ${rule.priority}`],
+      ),
+      h.td(
+        [h.Class(cellClass)],
+        [
+          h.button(
+            [
+              h.Type("button"),
+              h.Role("switch"),
+              h.AriaChecked(rule.enabled),
+              h.OnClick(Message.ClickedToggleRule({ ruleId: rule.id })),
+              h.Class(
+                cn(
+                  "cursor-pointer text-xs",
+                  rule.enabled ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
+                ),
+              ),
+            ],
+            [rule.enabled ? "enabled" : "disabled"],
+          ),
+        ],
+      ),
+      h.td(
+        [h.Class(cn(cellClass, "text-right whitespace-nowrap"))],
+        [
+          rowButton(h, "Edit", Message.ClickedEditRule({ ruleId: rule.id }), {
+            action: "edit-rule",
+          }),
+          rowButton(
+            h,
+            confirming ? "Confirm delete" : "Delete",
+            Message.ClickedDeleteRule({ ruleId: rule.id, version: rule.version }),
+            { isDestructive: confirming, action: "delete-rule" },
+          ),
+        ],
+      ),
+    ],
+  )
 }
+
+const rulesSection = (h: HtmlBuilder<Message>, model: Model, view: ConfigurationView): Html =>
+  h.section(
+    [h.Class("flex flex-col gap-2")],
+    [
+      h.div(
+        [h.Class("flex items-center justify-between gap-2")],
+        [
+          sectionTitle(h, "Rules"),
+          Button.view(
+            h,
+            {
+              variant: "outline",
+              size: "xs",
+              onClick: Message.ClickedNewRule(),
+              isDisabled: !view.policies.some((policy) => policy.publishedRevision !== null),
+              label: "New rule",
+            },
+            [h.DataAttribute("action", "new-rule")],
+          ),
+        ],
+      ),
+      view.rules.length === 0
+        ? h.div(
+            [h.Class(emptyClass)],
+            ["No rules yet. A rule adds a label when a published policy matches."],
+          )
+        : table(
+            h,
+            ["Label", "Policy", "On no match", "Group", "", ""],
+            view.rules.map((rule) => ruleRow(h, model, view, rule)),
+          ),
+    ],
+  )
 
 const reconciliationsSection = (
   h: HtmlBuilder<Message>,
@@ -527,44 +916,86 @@ const reconciliationsSection = (
               "No qualified snapshots yet. Activate a revision and change an issue or pull request.",
             ],
           )
-        : h.table(
-            [h.Class("w-full text-sm")],
-            [
-              h.thead(
-                [h.Class("text-muted-foreground text-left text-xs")],
+        : table(
+            h,
+            ["#", "Snapshot", "Revision", "Outcome", "Plan", "When"],
+            reconciliations.map((row) =>
+              h.tr(
+                [h.Class("border-t"), h.DataAttribute("outcome", row.outcome ?? "pending")],
                 [
-                  h.tr(
-                    [],
-                    ["#", "Snapshot", "Revision", "Outcome", "Plan", "Detail", "When"].map((head) =>
-                      h.th([h.Class("py-1 pr-3 font-medium")], [head]),
-                    ),
+                  h.td([h.Class(cellClass)], [String(row.number)]),
+                  h.td([h.Class(cellClass)], [row.snapshotGeneration]),
+                  h.td([h.Class(cellClass)], [String(row.rulesRevision)]),
+                  h.td(
+                    [h.Class(cellClass)],
+                    [
+                      h.div([], [row.outcome ?? "pending"]),
+                      h.div([h.Class("text-muted-foreground text-xs")], [row.detail ?? ""]),
+                    ],
+                  ),
+                  h.td(
+                    [h.Class(cellClass)],
+                    [
+                      row.plan === null
+                        ? h.empty
+                        : row.plan.actions.length === 0
+                          ? h.span([h.Class("text-muted-foreground")], ["no changes"])
+                          : h.ul(
+                              [h.Class("flex flex-col gap-0.5")],
+                              describePlan(row.plan, view).map((line, index) =>
+                                h.li(
+                                  [
+                                    h.DataAttribute(
+                                      "action",
+                                      row.plan?.actions[index]?.action ?? "",
+                                    ),
+                                  ],
+                                  [line],
+                                ),
+                              ),
+                            ),
+                    ],
+                  ),
+                  h.td(
+                    [h.Class(cn(cellClass, "text-muted-foreground whitespace-nowrap"))],
+                    [DateTime.formatUtc(row.completedAt ?? row.createdAt)],
                   ),
                 ],
               ),
-              h.tbody(
-                [],
-                reconciliations.map((row) =>
-                  h.tr(
-                    [h.Class("border-t"), h.DataAttribute("outcome", row.outcome ?? "pending")],
-                    [
-                      h.td([h.Class("py-1 pr-3")], [String(row.number)]),
-                      h.td([h.Class("py-1 pr-3")], [row.snapshotGeneration]),
-                      h.td([h.Class("py-1 pr-3")], [String(row.rulesRevision)]),
-                      h.td([h.Class("py-1 pr-3")], [row.outcome ?? "pending"]),
-                      h.td([h.Class("py-1 pr-3")], [planCell(h, row, view)]),
-                      h.td([h.Class("text-muted-foreground py-1 pr-3")], [row.detail ?? ""]),
-                      h.td(
-                        [h.Class("text-muted-foreground py-1 pr-3 whitespace-nowrap")],
-                        [DateTime.formatUtc(row.completedAt ?? row.createdAt)],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
     ],
   )
+
+const panelView = (h: HtmlBuilder<Message>, model: Model): Html => {
+  switch (model.panel._tag) {
+    case "Closed":
+      return h.empty
+    case "LoadingPolicy":
+      return h.div([h.Class("text-muted-foreground text-sm")], ["Loading the policy"])
+    case "PolicyEditor":
+      return h.submodel({
+        slotId: "policy-editor",
+        model: model.panel.editor,
+        view: PolicyEditor.view,
+        toParentMessage: (message) => Message.GotPolicyEditorMessage({ message }),
+      })
+    case "RuleEditor":
+      return h.submodel({
+        slotId: "rule-editor",
+        model: model.panel.editor,
+        view: RuleEditor.view,
+        toParentMessage: (message) => Message.GotRuleEditorMessage({ message }),
+      })
+    case "TestBench":
+      return h.submodel({
+        slotId: "test-bench",
+        model: model.panel.bench,
+        view: TestBench.view,
+        toParentMessage: (message) => Message.GotTestBenchMessage({ message }),
+      })
+  }
+}
 
 const detailPanel = (h: HtmlBuilder<Message>, model: Model): Html =>
   Option.match(model.selected, {
@@ -585,9 +1016,14 @@ const detailPanel = (h: HtmlBuilder<Message>, model: Model): Html =>
                 onSome: (reason) =>
                   h.div([h.Class("text-destructive text-sm")], [`Refresh failed: ${reason}`]),
               }),
-              policiesSection(h, detail.configuration),
-              rulesSection(h, detail.configuration),
-              labelsSection(h, detail.configuration),
+              model.panel._tag === "Closed"
+                ? h.empty
+                : h.div(
+                    [h.Class("rounded-lg border bg-card p-4 shadow-xs")],
+                    [panelView(h, model)],
+                  ),
+              policiesSection(h, model, detail.configuration),
+              rulesSection(h, model, detail.configuration),
               reconciliationsSection(h, detail.reconciliations, detail.configuration),
             ],
           ),
@@ -602,7 +1038,7 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
         [h.Class("flex flex-col gap-2")],
         [sectionTitle(h, "Repositories"), repositoryList(h, model)],
       ),
-      h.div([], [detailPanel(h, model)]),
+      h.div([h.Class("min-w-0")], [detailPanel(h, model)]),
     ],
   ),
 )

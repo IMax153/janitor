@@ -6,6 +6,16 @@ packages:
 catalogMode: prefer
 
 catalog:
+  "@codemirror/autocomplete": 6.20.3
+  "@codemirror/commands": 6.10.4
+  "@codemirror/lang-json": 6.0.2
+  "@codemirror/language": 6.12.4
+  "@codemirror/lint": 6.9.7
+  "@codemirror/search": 6.7.1
+  "@codemirror/state": 6.7.1
+  "@codemirror/view": 6.43.8
+  "@lezer/common": 1.5.2
+  "@uiw/codemirror-theme-github": 4.25.11
   "@effect/platform-browser": 4.0.0-rc.112
   "@effect/platform-node": 4.0.0-rc.112
   "@effect/sql-pg": 4.0.0-rc.112

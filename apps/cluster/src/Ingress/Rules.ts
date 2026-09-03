@@ -17,6 +17,7 @@ import {
   ValidatePolicyRequest,
   ValidatePolicyResponse,
 } from "@janitor/domain/Labeling/Policy/Configuration"
+import { describeCatalog, FactDescription } from "@janitor/domain/Labeling/Policy/Facts"
 import { RuleId } from "@janitor/domain/Labeling/Policy/Plan"
 import { TestRequest, TestResponse } from "@janitor/domain/Labeling/Policy/Test"
 import * as Effect from "effect/Effect"
@@ -165,7 +166,14 @@ const handled =
       Effect.catchCause(unavailable(operation)),
     )
 
+const catalog = describeCatalog()
+
 const reads = HttpRouter.addAll([
+  HttpRouter.route(
+    "GET",
+    "/labeling/catalog",
+    json(Schema.Array(FactDescription))(catalog).pipe(handled("catalog")),
+  ),
   HttpRouter.route(
     "GET",
     "/repositories",
