@@ -88,6 +88,11 @@ export type PullRequestProjection =
   /** GitHub's update clock or the journal sequence was older than what is stored. */
   | { readonly _tag: "Stale" }
 
+export type PullRequestDetailsProjection =
+  | { readonly _tag: "Applied" }
+  /** No entity row exists yet; the entity scan has not seen this number. */
+  | { readonly _tag: "Unknown" }
+
 const rowsToRecords = <S extends Schema.Top>(schema: S) =>
   Schema.decodeUnknownEffect(Schema.Array(schema))
 
@@ -197,10 +202,10 @@ export class GitHubReadModel extends Context.Service<
     readonly applyIssue: (
       observation: IssueObservation,
     ) => Effect.Effect<PullRequestProjection, GitHubReadModelError>
-    /** Pull request details; requires the entity row to exist. */
+    /** Pull request details; skipped until the entity row exists. */
     readonly applyPullRequestDetails: (
       observation: PullRequestDetailsObservation,
-    ) => Effect.Effect<void, GitHubReadModelError>
+    ) => Effect.Effect<PullRequestDetailsProjection, GitHubReadModelError>
     readonly getInstallation: (
       installationId: GitHubInstallationId,
     ) => Effect.Effect<Option.Option<GitHubInstallationRecord>, GitHubReadModelError>
@@ -578,17 +583,17 @@ export class GitHubReadModel extends Context.Service<
     const applyPullRequestDetails = Effect.fn("GitHubReadModel.applyPullRequestDetails")(
       function* ({ repositoryId, pullRequest, sequence }: PullRequestDetailsObservation) {
         const merged = pullRequest.merged ?? pullRequest.mergedAt !== null
-        yield* sql`
-        INSERT INTO github_pull_request ${sql.insert({
-          repository_id: repositoryId,
-          number: pullRequest.number,
-          pull_request_id: pullRequest.id,
-          pull_request_node_id: pullRequest.nodeId,
-          base_ref: pullRequest.base.ref,
-          draft: pullRequest.draft,
-          head_sha: pullRequest.head.sha,
-          merged,
-        })}
+        // The entity scan owns the github_entity row; details for a number it has
+        // not seen yet are skipped rather than violating the foreign key.
+        const rows = yield* sql`
+        INSERT INTO github_pull_request
+          (repository_id, number, pull_request_id, pull_request_node_id, base_ref, draft, head_sha, merged)
+        SELECT ${repositoryId}, ${pullRequest.number}, ${pullRequest.id}, ${pullRequest.nodeId},
+               ${pullRequest.base.ref}, ${pullRequest.draft}, ${pullRequest.head.sha}, ${merged}
+        WHERE EXISTS (
+          SELECT 1 FROM github_entity e
+          WHERE e.repository_id = ${repositoryId} AND e.number = ${pullRequest.number}
+        )
         ON CONFLICT (repository_id, number) DO UPDATE SET
           pull_request_id = EXCLUDED.pull_request_id,
           pull_request_node_id = EXCLUDED.pull_request_node_id,
@@ -601,8 +606,10 @@ export class GitHubReadModel extends Context.Service<
           WHERE e.repository_id = EXCLUDED.repository_id AND e.number = EXCLUDED.number
             AND e.github_updated_at <= ${DateTime.toDateUtc(pullRequest.updatedAt)}
         )
+        RETURNING number
       `.pipe(wrap("applyPullRequestDetails"))
         void sequence
+        return rows.length === 0 ? ({ _tag: "Unknown" } as const) : ({ _tag: "Applied" } as const)
       },
     )
 

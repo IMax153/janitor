@@ -13,7 +13,7 @@ import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
 import { describeError } from "./SqlErrors.ts"
-import { SyncTargets } from "./SyncTargets.ts"
+import { SYNC_IN_FLIGHT_TIMEOUT, SyncTargets } from "./SyncTargets.ts"
 
 export class SyncPlannerError extends Schema.TaggedError<SyncPlannerError>()(
   "@janitor/cluster/SyncPlanner/SyncPlannerError",
@@ -125,6 +125,7 @@ export class SyncPlanner extends Context.Service<
           (error) => new SyncPlannerError({ operation, message: describeError(error) }),
         )
 
+    const inFlightTimeout = `${Duration.toSeconds(SYNC_IN_FLIGHT_TIMEOUT)} seconds`
     const invalidate = (scope: SyncScope, full: boolean) =>
       targets.invalidate({ scope, sequence: Option.none(), full }).pipe(wrap("plan"))
 
@@ -163,7 +164,11 @@ export class SyncPlanner extends Context.Service<
         SELECT r.repository_id, r.installation_id, track.name AS track,
                t.verified_at,
                t.scan_watermark AS last_full_at,
-               COALESCE(t.requested_generation > t.completed_generation, FALSE) AS pending
+               COALESCE(
+                 t.requested_generation > t.completed_generation
+                   AND t.updated_at > CLOCK_TIMESTAMP() - ${inFlightTimeout}::interval,
+                 FALSE
+               ) AS pending
         FROM github_repository r
         CROSS JOIN (VALUES ('labels'), ('entities'), ('pull_requests')) AS track(name)
         LEFT JOIN sync_target t

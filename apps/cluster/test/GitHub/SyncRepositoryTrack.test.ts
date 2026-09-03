@@ -119,7 +119,10 @@ const services = (
           return { _tag: "Applied" as const }
         }),
       applyPullRequestDetails: (observation) =>
-        Effect.sync(() => void recorder.pulls.push(observation)),
+        Effect.sync(() => {
+          recorder.pulls.push(observation)
+          return { _tag: "Applied" as const }
+        }),
       getInstallation: () => Effect.succeedNone,
       getRepository: () => Effect.succeed(stored),
       getEntity: () => Effect.succeedNone,

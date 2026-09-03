@@ -22,7 +22,9 @@ import {
   SyncRunOutcome,
   completeRun,
   failure,
+  logWorkflowFailure,
   paginate,
+  requestFollowUp,
   resolveRepository,
 } from "./SyncSupport.ts"
 
@@ -263,24 +265,30 @@ export const SyncRepositoryTrackLayer = SyncRepositoryTrack.toLayer(
         if (pages._tag !== "Complete") {
           return yield* finish(pages)
         }
-        yield* Activity.make({
+        const unknown = yield* Activity.make({
           name: "SyncRepositoryTrack/ApplyPullRequests",
+          success: Schema.Int,
           error: SyncActivityError,
           execute: readModel
             .withTransaction(
-              Effect.forEach(
-                pages.items,
-                (pullRequest) =>
-                  readModel.applyPullRequestDetails({ repositoryId, pullRequest, sequence }),
-                { discard: true },
+              Effect.forEach(pages.items, (pullRequest) =>
+                readModel.applyPullRequestDetails({ repositoryId, pullRequest, sequence }),
               ),
             )
-            .pipe(Effect.mapError((error) => failure(error.message))),
+            .pipe(
+              Effect.map((results) => results.filter((result) => result._tag === "Unknown").length),
+              Effect.mapError((error) => failure(error.message)),
+            ),
         })
-        return yield* finish({ _tag: "Complete", count: pages.items.length })
+        // The entity scan may still be bootstrapping alongside this run; ask
+        // for another pass so the skipped details attach once it lands.
+        if (unknown > 0) {
+          yield* requestFollowUp("SyncRepositoryTrack", scope)
+        }
+        return yield* finish({ _tag: "Complete", count: pages.items.length - unknown })
       }
     }
-  }),
+  }, logWorkflowFailure("SyncRepositoryTrack")),
 )
 
 const decodePayload = Schema.decodeUnknownEffect(SyncRepositoryTrackPayload)

@@ -261,7 +261,24 @@ layer(ReadModelLayer, { timeout: "2 minutes" })("GitHubReadModel against Postgre
       })
       assert.deepStrictEqual(applied, { _tag: "Applied" })
 
-      yield* readModel.applyPullRequestDetails({
+      const unknown = yield* readModel.applyPullRequestDetails({
+        repositoryId: scanRepo,
+        sequence: seq(40),
+        pullRequest: {
+          id: GitHubPullRequestDatabaseId.make("7099"),
+          nodeId: GitHubPullRequestNodeId.make("PR_7099"),
+          number: 99,
+          state: "open",
+          draft: false,
+          mergedAt: null,
+          updatedAt: DateTime.makeUnsafe("2026-09-02T12:00:00.000Z"),
+          head: { sha: GitHubCommitSha.make("c".repeat(40)) },
+          base: { ref: "main" },
+        },
+      })
+      assert.deepStrictEqual(unknown, { _tag: "Unknown" })
+
+      const detailsApplied = yield* readModel.applyPullRequestDetails({
         repositoryId: scanRepo,
         sequence: seq(40),
         pullRequest: {
@@ -276,6 +293,7 @@ layer(ReadModelLayer, { timeout: "2 minutes" })("GitHubReadModel against Postgre
           base: { ref: "develop" },
         },
       })
+      assert.deepStrictEqual(detailsApplied, { _tag: "Applied" })
 
       const stored = Option.getOrThrow(yield* readModel.getEntity(scanRepo, 7))
       assert.strictEqual(stored.entity.kind, "pull_request")

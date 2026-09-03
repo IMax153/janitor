@@ -15,6 +15,7 @@ import { PROJECT_GITHUB_WEBHOOK_TAG } from "./ProjectWebhookRequest.ts"
 import { ContentPurge, type ContentPurgeError } from "../ContentPurge.ts"
 import { SyncTargets, type SyncTargetError } from "../SyncTargets.ts"
 import { GitHubReadModel, type GitHubReadModelError } from "./ReadModel.ts"
+import { logWorkflowFailure } from "./SyncSupport.ts"
 import { GitHubWebhookJournal } from "./WebhookJournal.ts"
 import type { WorkflowRegistration } from "../WorkflowDispatcher.ts"
 
@@ -254,7 +255,7 @@ export const ProjectGitHubWebhookLayer = ProjectGitHubWebhook.toLayer(
       execute: projectDelivery(payload.deliveryId),
     })
     return { deliveryId: payload.deliveryId, status }
-  }),
+  }, logWorkflowFailure("ProjectGitHubWebhook")),
 )
 
 const decodePayload = Schema.decodeUnknownEffect(ProjectGitHubWebhookPayload)

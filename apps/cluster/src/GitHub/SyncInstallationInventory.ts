@@ -25,6 +25,7 @@ import {
   completeRun,
   failure,
   fetchJson,
+  logWorkflowFailure,
   paginate,
   withRateLimitWaits,
 } from "./SyncSupport.ts"
@@ -95,7 +96,7 @@ export const SyncInstallationInventoryLayer = SyncInstallationInventory.toLayer(
       return {
         installationId,
         generation: payload.generation,
-        outcome: "superseded",
+        outcome: "superseded" as const,
         repositoryCount: 0,
       }
     }
@@ -214,7 +215,7 @@ export const SyncInstallationInventoryLayer = SyncInstallationInventory.toLayer(
     })
 
     return result("verified", repositories.length)
-  }),
+  }, logWorkflowFailure("SyncInstallationInventory")),
 )
 
 const decodePayload = Schema.decodeUnknownEffect(SyncInstallationInventoryPayload)

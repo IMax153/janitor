@@ -119,6 +119,30 @@ layer(TargetsLayer, { timeout: "2 minutes" })("SyncTargets against Postgres", (i
     }),
   )
 
+  it.effect("a run past the in-flight timeout no longer blocks dispatch", () =>
+    Effect.gen(function* () {
+      const targets = yield* SyncTargets
+      const sql = yield* SqlClient.SqlClient
+      const s = scope("9")
+      yield* targets.invalidate({ scope: s, sequence: seq(1) })
+      yield* targets.begin(s, gen(1))
+
+      const fresh = yield* targets.invalidate({ scope: s, sequence: seq(2) })
+      assert.isFalse(fresh.dispatched)
+
+      yield* sql`
+        UPDATE sync_target SET updated_at = CLOCK_TIMESTAMP() - INTERVAL '31 minutes'
+        WHERE scope_key = 'installation:9'
+      `
+      const expired = yield* targets.invalidate({ scope: s, sequence: seq(3) })
+      assert.deepStrictEqual(expired, { generation: gen(3), dispatched: true })
+      assert.deepStrictEqual(
+        (yield* outboxRows("installation:9")).map((row) => row.execution_key),
+        ["installation:9:1", "installation:9:3"],
+      )
+    }),
+  )
+
   it.effect("records blocked and failed outcomes without verifying", () =>
     Effect.gen(function* () {
       const targets = yield* SyncTargets

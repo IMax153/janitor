@@ -32,6 +32,13 @@ export class SyncTargetError extends Schema.TaggedError<SyncTargetError>()(
 /** How long a burst of invalidations waits before its first sync starts. */
 export const SYNC_DEBOUNCE = Duration.seconds(5)
 
+/**
+ * A dispatched run that has not completed within this window is presumed dead
+ * (the workflow failed inside the engine, which records nothing here) and no
+ * longer blocks a new dispatch for the scope.
+ */
+export const SYNC_IN_FLIGHT_TIMEOUT = Duration.minutes(30)
+
 export interface InvalidateRequest {
   readonly scope: SyncScope
   /** Highest journal sequence that motivated this invalidation, if any. */
@@ -85,6 +92,7 @@ const TargetRow = Schema.Struct({
   last_error: Schema.NullOr(Schema.String),
   scan_watermark: Schema.NullOr(Schema.DateTimeUtcFromDate),
   full_requested: Schema.Boolean,
+  updated_at: Schema.DateTimeUtcFromDate,
 })
 
 const toRecord = (row: typeof TargetRow.Type): SyncTargetRecord => ({
@@ -141,6 +149,8 @@ export class SyncTargets extends Context.Service<
           (error) => new SyncTargetError({ operation, message: describeError(error) }),
         )
 
+    const inFlightInterval = `${Duration.toSeconds(SYNC_IN_FLIGHT_TIMEOUT)} seconds`
+
     const enqueueRun = (scope: SyncScope, generation: SyncGeneration) =>
       Effect.gen(function* () {
         const now = yield* DateTime.now
@@ -171,7 +181,10 @@ export class SyncTargets extends Context.Service<
           requested_sequence = GREATEST(COALESCE(sync_target.requested_sequence, 0), COALESCE(EXCLUDED.requested_sequence, 0)),
           debounce_started_at = COALESCE(sync_target.debounce_started_at, CLOCK_TIMESTAMP()),
           full_requested = sync_target.full_requested OR EXCLUDED.full_requested,
-          updated_at = CLOCK_TIMESTAMP()
+          updated_at = CASE
+            WHEN sync_target.dispatched_generation > sync_target.completed_generation THEN sync_target.updated_at
+            ELSE CLOCK_TIMESTAMP()
+          END
         RETURNING *
       `.pipe(Effect.flatMap(decodeRows), wrap("invalidate"))
       const row = rows[0]
@@ -183,8 +196,14 @@ export class SyncTargets extends Context.Service<
       }
       // A run is pending or active while dispatched exceeds completed; it will
       // either pick up this generation at begin or create the follow-up at completion.
-      const runInFlight = gt(row.dispatched_generation, row.completed_generation)
-      if (runInFlight) {
+      // Past the in-flight timeout the run is presumed dead and dispatch resumes.
+      // Judged on the database clock so it agrees with the planner's query.
+      const inFlight = yield* sql<{ in_flight: boolean }>`
+        SELECT dispatched_generation > completed_generation
+           AND updated_at > CLOCK_TIMESTAMP() - ${inFlightInterval}::interval AS in_flight
+        FROM sync_target WHERE scope_key = ${scopeKey}
+      `.pipe(wrap("invalidate"))
+      if (inFlight[0]?.in_flight === true) {
         return { generation: row.requested_generation, dispatched: false }
       }
       yield* enqueueRun(request.scope, row.requested_generation).pipe(wrap("invalidate"))

@@ -21,6 +21,7 @@ import {
   completeRun,
   failure,
   fetchJson,
+  logWorkflowFailure,
   resolveRepository,
   withRateLimitWaits,
 } from "./SyncSupport.ts"
@@ -199,7 +200,7 @@ export const RefreshEntityLayer = RefreshEntity.toLayer(
       watermark: Option.none(),
     })
     return result(generation, "verified")
-  }),
+  }, logWorkflowFailure("RefreshEntity")),
 )
 
 const decodePayload = Schema.decodeUnknownEffect(RefreshEntityPayload)

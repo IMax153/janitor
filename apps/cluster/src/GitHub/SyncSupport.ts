@@ -1,5 +1,6 @@
 import type { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
-import type { SyncGeneration, SyncScope } from "@janitor/domain/GitHub/Sync"
+import { type SyncGeneration, type SyncScope, syncScopeKey } from "@janitor/domain/GitHub/Sync"
+import * as Cause from "effect/Cause"
 import * as DateTime from "effect/DateTime"
 import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
@@ -253,11 +254,61 @@ export const completeRun = (
     error: SyncActivityError,
     execute: Effect.gen(function* () {
       const targets = yield* SyncTargets
-      yield* targets
+      const accepted = yield* targets
         .complete({ scope, generation, outcome })
+        .pipe(Effect.mapError((error) => failure(error.message)))
+      const detail =
+        outcome._tag === "Failed"
+          ? outcome.error
+          : outcome._tag === "Blocked"
+            ? outcome.reason
+            : undefined
+      yield* Effect.logWithLevel(outcome._tag === "Verified" ? "Info" : "Warn")(
+        "Completed GitHub sync run",
+      ).pipe(
+        Effect.annotateLogs({
+          workflow: name,
+          scope: syncScopeKey(scope),
+          generation,
+          outcome: outcome._tag,
+          accepted,
+          ...(detail === undefined ? {} : { detail }),
+        }),
+      )
+    }),
+  })
+
+/**
+ * Asks for another generation of the same scope. The run in flight blocks
+ * dispatch, so completion enqueues the follow-up once this run's generation
+ * is recorded.
+ */
+export const requestFollowUp = (name: string, scope: SyncScope) =>
+  Activity.make({
+    name: `${name}/FollowUp`,
+    error: SyncActivityError,
+    execute: Effect.gen(function* () {
+      const targets = yield* SyncTargets
+      yield* targets
+        .invalidate({ scope, sequence: Option.none() })
         .pipe(Effect.mapError((error) => failure(error.message)))
     }),
   })
+
+/**
+ * Workflow bodies run inside the engine, which records a failed exit without
+ * surfacing it. Log the cause so a dead run is visible in Worker logs.
+ */
+export const logWorkflowFailure =
+  (name: string) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.tapCause(effect, (cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.void
+        : Effect.logError(`${name} workflow failed`, cause).pipe(
+            Effect.annotateLogs({ workflow: name }),
+          ),
+    )
 
 /** Resolves the repository a track belongs to, or the reason it cannot be scanned. */
 export const resolveRepository = (repositoryId: GitHubRepositoryDatabaseId) =>
