@@ -1,5 +1,6 @@
 import * as AlchemyCloudflareCluster from "@effect/platform-cloudflare/AlchemyCloudflareCluster"
 import * as Cloudflare from "alchemy/Cloudflare"
+import * as Command from "alchemy/Command"
 import * as Postgres from "alchemy/SQL/Postgres"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -55,11 +56,25 @@ import { WorkflowOutboxCronLayer, WorkflowOutboxCronName } from "./WorkflowOutbo
 
 export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
   "ClusterWorker",
-  {
-    main: import.meta.url,
-    compatibility: { flags: ["nodejs_compat"] },
-    domain: "janitor.effectful.co",
-  },
+  Effect.gen(function* () {
+    // The web app is served from this Worker so the browser and the API share
+    // one origin: no CORS, and the Access cookie covers both once it exists.
+    const web = yield* Command.Build("WebBuild", {
+      command: "./node_modules/.bin/vp build",
+      cwd: "apps/web",
+      outdir: "dist",
+    })
+    return {
+      main: import.meta.url,
+      compatibility: { flags: ["nodejs_compat"] },
+      domain: "janitor.effectful.co",
+      assets: {
+        directory: web.outdir,
+        // Foldkit routes on the client; unmatched paths boot the app.
+        notFoundHandling: "single-page-application" as const,
+      },
+    }
+  }),
   Effect.gen(function* () {
     const hyperdrive = yield* Cloudflare.Hyperdrive.Connect(JanitorHyperdrive)
 
@@ -190,12 +205,15 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       }),
     )
 
+    // Requests that match a built file never reach the Worker. Everything
+    // else that is not the API goes back to the asset layer, which applies
+    // the single-page fallback.
+    const env = yield* Cloudflare.Workers.WorkerEnvironment
+    const assets = Cloudflare.fromCloudflareFetcher(env.ASSETS)
     const handler = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest
       const url = new URL(request.originalUrl)
-      return url.pathname.startsWith("/api/v1/")
-        ? yield* api
-        : HttpServerResponse.empty({ status: 404 })
+      return url.pathname.startsWith("/api/v1/") ? yield* api : yield* assets.fetch(request)
     })
 
     return {

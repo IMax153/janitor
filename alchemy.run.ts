@@ -1,5 +1,6 @@
 import * as Alchemy from "alchemy"
 import * as Cloudflare from "alchemy/Cloudflare"
+import * as Command from "alchemy/Command"
 import * as Docker from "alchemy/Docker"
 import * as Neon from "alchemy/Neon"
 import * as Provider from "alchemy/Provider"
@@ -17,7 +18,12 @@ const DockerProviders = Layer.effect(
   Layer.provideMerge(Docker.DockerLive),
 )
 
-const Providers = Layer.mergeAll(Cloudflare.providers(), DockerProviders, Neon.providers())
+const Providers = Layer.mergeAll(
+  Cloudflare.providers(),
+  Command.providers(),
+  DockerProviders,
+  Neon.providers(),
+)
 
 export default Alchemy.Stack(
   "Janitor",
@@ -29,14 +35,9 @@ export default Alchemy.Stack(
     const database = yield* JanitorDatabase
     const cluster = yield* ClusterWorker
 
-    const website = yield* Cloudflare.Website.Foldkit("Website", {
-      rootDir: "apps/web",
-    })
-
     return {
       databaseId: database.databaseId,
-      clusterUrl: cluster.url,
-      websiteUrl: website.url,
+      url: cluster.url,
     }
   }),
 )
