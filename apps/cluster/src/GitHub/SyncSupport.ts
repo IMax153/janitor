@@ -20,6 +20,7 @@ import {
   type GitHubTransportFailure,
 } from "./Transport.ts"
 import { RulesetActivation } from "../Labeling/Activation.ts"
+import { backfillAfterActivation } from "../Labeling/SnapshotHandoff.ts"
 
 export const SyncRunOutcome = Schema.Literals(["verified", "blocked", "failed", "superseded"])
 export type SyncRunOutcome = typeof SyncRunOutcome.Type
@@ -263,13 +264,16 @@ export const completeRun = (
       if (outcome._tag === "Verified" && scope._tag === "RepositoryTrack") {
         const activation = yield* Effect.serviceOption(RulesetActivation)
         if (Option.isSome(activation)) {
-          yield* activation.value
+          const promoted = yield* activation.value
             .promote(scope.repositoryId)
             .pipe(
               Effect.catchCause((cause) =>
-                Effect.logError("Ruleset promotion after track verification failed", cause),
+                Effect.logError("Ruleset promotion after track verification failed", cause).pipe(
+                  Effect.as(Option.none()),
+                ),
               ),
             )
+          if (Option.isSome(promoted)) yield* backfillAfterActivation(scope.repositoryId)
         }
       }
       const detail =

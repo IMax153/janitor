@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect"
 import * as Singleton from "effect/unstable/cluster/Singleton"
 import { ContentPurge } from "./ContentPurge.ts"
 import { RulesetActivation } from "./Labeling/Activation.ts"
+import { backfillAfterActivation } from "./Labeling/SnapshotHandoff.ts"
 import { REPAIR_PLANNER_NAME, SyncPlanner } from "./SyncPlanner.ts"
 
 export const SyncRepairCronName = REPAIR_PLANNER_NAME
@@ -19,7 +20,8 @@ export const SyncRepairCronLayer = Singleton.make(
     }
     // Recovery for promotions whose post-verification attempt was lost.
     const activation = yield* RulesetActivation
-    yield* activation.promoteAll
+    const promoted = yield* activation.promoteAll
+    yield* Effect.forEach(promoted, backfillAfterActivation, { discard: true })
     const purge = yield* ContentPurge
     const purged = yield* purge.runDue(now)
     if (purged.purged > 0) {

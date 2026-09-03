@@ -173,11 +173,11 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
           LabelingRules.layer,
           LabelingTest.layer,
           LabelingOverview.layer,
-          SnapshotHandoff.layer,
         ),
       ),
       Layer.provideMerge(Policies.layer),
       Layer.provideMerge(LabelingConfiguration.layer),
+      Layer.provideMerge(SnapshotHandoff.layer),
       Layer.provideMerge(
         WorkflowDispatcher.layer([
           ProjectGitHubWebhookRegistration,

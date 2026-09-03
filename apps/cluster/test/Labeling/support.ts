@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
+import * as SqlClient from "effect/unstable/sql/SqlClient"
 import { GitHubIssueApi } from "@janitor/domain/GitHub/Api"
 import {
   GitHubAccountDatabaseId,
@@ -20,6 +21,7 @@ import { GitHubReadModel } from "../../src/GitHub/ReadModel.ts"
 import { RulesetActivation } from "../../src/Labeling/Activation.ts"
 import { LabelingConfiguration } from "../../src/Labeling/Configuration.ts"
 import { Policies } from "../../src/Labeling/Policies.ts"
+import { SnapshotHandoff } from "../../src/Labeling/SnapshotHandoff.ts"
 import { LabelingRules } from "../../src/Labeling/Rules.ts"
 import { LabelingTest } from "../../src/Labeling/Test.ts"
 import { SyncTargets } from "../../src/SyncTargets.ts"
@@ -30,6 +32,7 @@ import { MigratedPostgresLayer } from "../support/Postgres.ts"
 export const LabelingLayer = Layer.mergeAll(LabelingRules.layer, LabelingTest.layer).pipe(
   Layer.provideMerge(Policies.layer),
   Layer.provideMerge(LabelingConfiguration.layer),
+  Layer.provideMerge(SnapshotHandoff.layer),
   Layer.provideMerge(
     Layer.mergeAll(SyncTargets.layer, GitHubReadModel.layer, RulesetActivation.layer),
   ),
@@ -70,6 +73,10 @@ export const seed = Effect.gen(function* () {
     ],
     sequence: seq,
   })
+  // Mutation is fenced on the repository being enabled; the read model
+  // starts repositories paused.
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`UPDATE github_repository SET enabled = TRUE WHERE repository_id = ${repositoryId}`
   yield* readModel.applyLabelCatalog({
     repositoryId,
     labels: [

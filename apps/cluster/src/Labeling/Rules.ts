@@ -13,10 +13,12 @@ import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
 import { describeError } from "../SqlErrors.ts"
 import { RulesetActivation } from "./Activation.ts"
+import { backfillAfterActivation } from "./SnapshotHandoff.ts"
 import { listAudit, recordAudit } from "./Audit.ts"
 import {
   LabelingConfiguration,
@@ -195,7 +197,8 @@ export class LabelingRules extends Context.Service<
           }),
         )
         .pipe(wrap("create"))
-      yield* activation.promote(repositoryId).pipe(wrap("promote"))
+      const promoted = yield* activation.promote(repositoryId).pipe(wrap("promote"))
+      if (Option.isSome(promoted)) yield* backfillAfterActivation(repositoryId)
       return yield* find(repositoryId, ruleId)
     })
 
@@ -241,7 +244,8 @@ export class LabelingRules extends Context.Service<
           }),
         )
         .pipe(wrap("patch"))
-      yield* activation.promote(repositoryId).pipe(wrap("promote"))
+      const promoted = yield* activation.promote(repositoryId).pipe(wrap("promote"))
+      if (Option.isSome(promoted)) yield* backfillAfterActivation(repositoryId)
       return yield* find(repositoryId, ruleId)
     })
 
@@ -270,7 +274,8 @@ export class LabelingRules extends Context.Service<
           }),
         )
         .pipe(wrap("remove"))
-      yield* activation.promote(repositoryId).pipe(wrap("promote"))
+      const promoted = yield* activation.promote(repositoryId).pipe(wrap("promote"))
+      if (Option.isSome(promoted)) yield* backfillAfterActivation(repositoryId)
     })
 
     const audit = Effect.fn("LabelingRules.audit")(function* (

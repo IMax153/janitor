@@ -3,6 +3,7 @@ import { GitHubRepositoryAccess } from "@janitor/domain/GitHub/ReadModel"
 import { SyncGeneration } from "@janitor/domain/GitHub/Sync"
 import { GitHubWebhookJournalSequence } from "@janitor/domain/GitHub/WebhookJournal"
 import {
+  LabelActionRecord,
   type ReconciliationRecord,
   ReconciliationOutcome,
   type RepositoryOverview,
@@ -96,9 +97,50 @@ export class LabelingOverview extends Context.Service<
       Effect.withSpan("LabelingOverview.repositories"),
     )
 
+    const decodeActions = Schema.decodeUnknownEffect(
+      Schema.Array(
+        Schema.Struct({
+          number: Schema.Int,
+          snapshot_generation: SyncGeneration,
+          rules_revision: RevisionFromText,
+          label_id: LabelActionRecord.fields.labelId,
+          action: LabelActionRecord.fields.action,
+          rule_id: Schema.String,
+          status: LabelActionRecord.fields.status,
+          detail: Schema.NullOr(Schema.String),
+        }),
+      ),
+    )
+
     const reconciliations = Effect.fn("LabelingOverview.reconciliations")(function* (
       repositoryId: GitHubRepositoryDatabaseId,
     ) {
+      const actions = yield* sql`
+        SELECT a.number, a.snapshot_generation::text, a.rules_revision::text, a.label_id, a.action,
+               a.rule_id, a.status, a.detail
+        FROM labeling_label_action a
+        JOIN (
+          SELECT number, snapshot_generation, rules_revision FROM labeling_reconciliation
+          WHERE repository_id = ${repositoryId} ORDER BY created_at DESC LIMIT ${RECONCILIATION_LIST_LIMIT}
+        ) r USING (number, snapshot_generation, rules_revision)
+        WHERE a.repository_id = ${repositoryId}
+        ORDER BY a.label_id
+      `.pipe(Effect.flatMap(decodeActions), wrap("reconciliations"))
+      const actionsFor = (number: number, generation: string, revision: number) =>
+        actions
+          .filter(
+            (row) =>
+              row.number === number &&
+              row.snapshot_generation === generation &&
+              row.rules_revision === revision,
+          )
+          .map((row) => ({
+            labelId: row.label_id,
+            action: row.action,
+            ruleId: row.rule_id,
+            status: row.status,
+            detail: row.detail,
+          }))
       const rows = yield* sql`
         SELECT repository_id, number, snapshot_generation::text, rules_revision::text,
                covered_sequence::text, fingerprint, created_at, outcome, detail, plan, completed_at
@@ -118,6 +160,7 @@ export class LabelingOverview extends Context.Service<
         outcome: row.outcome,
         detail: row.detail,
         plan: row.plan,
+        actions: actionsFor(row.number, row.snapshot_generation, row.rules_revision),
         completedAt: row.completed_at,
       }))
     })

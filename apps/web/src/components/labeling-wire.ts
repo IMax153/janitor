@@ -225,6 +225,15 @@ export const ReconciliationRecord = Schema.Struct({
   outcome: Schema.NullOr(Schema.Literals(["evaluated", "superseded", "not-qualified", "failed"])),
   detail: Schema.NullOr(Schema.String),
   plan: Schema.NullOr(Plan),
+  actions: Schema.Array(
+    Schema.Struct({
+      labelId: Schema.String,
+      action: Schema.Literals(["add", "remove"]),
+      ruleId: Schema.String,
+      status: Schema.Literals(["planned", "applied", "failed"]),
+      detail: Schema.NullOr(Schema.String),
+    }),
+  ),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
 })
 export type ReconciliationRecord = typeof ReconciliationRecord.Type
@@ -275,11 +284,22 @@ export const policyName = (policies: ReadonlyArray<PolicyRecord>, policyId: stri
   policies.find((policy) => policy.policyId === policyId)?.name ?? policyId
 
 /** One line per planned change, naming the label and the policy that decided it. */
-export const describePlan = (plan: Plan, view: ConfigurationView): ReadonlyArray<string> =>
+export const describePlan = (
+  plan: Plan,
+  view: ConfigurationView,
+  actions: ReadonlyArray<ReconciliationRecord["actions"][number]> = [],
+): ReadonlyArray<string> =>
   plan.actions.map((action) => {
     const rule = view.rules.find((candidate) => candidate.id === action.ruleId)
     const via = rule === undefined ? action.ruleId : policyName(view.policies, rule.policyId)
-    return `${action.action} ${labelName(view.labels, action.labelId)} (${via})`
+    const status = actions.find((entry) => entry.labelId === action.labelId)
+    const suffix =
+      status === undefined || status.status === "planned"
+        ? ""
+        : status.status === "applied"
+          ? " ✓"
+          : ` ✗ ${status.detail ?? "failed"}`
+    return `${action.action} ${labelName(view.labels, action.labelId)} (${via})${suffix}`
   })
 
 export const describeLocation = (location: NodeTrace["location"]): string =>

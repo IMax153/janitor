@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema"
-import { GitHubRepositoryDatabaseId } from "../GitHub/Id.ts"
+import { GitHubLabelDatabaseId, GitHubRepositoryDatabaseId } from "../GitHub/Id.ts"
 import { GitHubRepositoryAccess } from "../GitHub/ReadModel.ts"
 import { SyncGeneration } from "../GitHub/Sync.ts"
 import { GitHubWebhookJournalSequence } from "../GitHub/WebhookJournal.ts"
@@ -35,6 +35,20 @@ export const ReconciliationOutcome = Schema.Literals([
 ]).annotate({ identifier: "ReconciliationOutcome" })
 export type ReconciliationOutcome = typeof ReconciliationOutcome.Type
 
+export const LabelActionStatus = Schema.Literals(["planned", "applied", "failed"]).annotate({
+  identifier: "LabelActionStatus",
+})
+export type LabelActionStatus = typeof LabelActionStatus.Type
+
+export const LabelActionRecord = Schema.Struct({
+  labelId: GitHubLabelDatabaseId,
+  action: Schema.Literals(["add", "remove"]),
+  ruleId: Schema.String,
+  status: LabelActionStatus,
+  detail: Schema.NullOr(Schema.String),
+}).annotate({ identifier: "LabelActionRecord" })
+export type LabelActionRecord = typeof LabelActionRecord.Type
+
 export const ReconciliationRecord = Schema.Struct({
   ...ReconciliationIdentity.fields,
   coveredSequence: GitHubWebhookJournalSequence,
@@ -43,8 +57,10 @@ export const ReconciliationRecord = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   outcome: Schema.NullOr(ReconciliationOutcome),
   detail: Schema.NullOr(Schema.String),
-  /** Present once the outcome is `evaluated`. Nothing is applied yet. */
+  /** Present once the outcome is `evaluated`. */
   plan: Schema.NullOr(Plan),
+  /** One row per planned change and what happened to it on GitHub. */
+  actions: Schema.Array(LabelActionRecord),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
 }).annotate({ identifier: "ReconciliationRecord" })
 export type ReconciliationRecord = typeof ReconciliationRecord.Type

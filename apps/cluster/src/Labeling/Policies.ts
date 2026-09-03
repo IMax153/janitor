@@ -29,6 +29,7 @@ import * as Schema from "effect/Schema"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
 import { describeError } from "../SqlErrors.ts"
 import { RulesetActivation } from "./Activation.ts"
+import { backfillAfterActivation } from "./SnapshotHandoff.ts"
 import { recordAudit } from "./Audit.ts"
 import {
   LabelingConfiguration,
@@ -479,7 +480,8 @@ export class Policies extends Context.Service<
           }),
         )
         .pipe(wrap("publish"))
-      yield* activation.promote(repositoryId).pipe(wrap("promote"))
+      const promoted = yield* activation.promote(repositoryId).pipe(wrap("promote"))
+      if (Option.isSome(promoted)) yield* backfillAfterActivation(repositoryId)
       return yield* detail(repositoryId, policyId)
     })
 
@@ -537,7 +539,10 @@ export class Policies extends Context.Service<
           }),
         )
         .pipe(wrap("remove"))
-      if (current.published !== null) yield* activation.promote(repositoryId).pipe(wrap("promote"))
+      if (current.published !== null) {
+        const promoted = yield* activation.promote(repositoryId).pipe(wrap("promote"))
+        if (Option.isSome(promoted)) yield* backfillAfterActivation(repositoryId)
+      }
     })
 
     return { list, get, create, save, publish, validate, versions, remove, names, resolver }

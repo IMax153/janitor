@@ -11,6 +11,7 @@ import { Policies } from "../../src/Labeling/Policies.ts"
 import { ReconcileEntity, ReconcileEntityLayer } from "../../src/Labeling/ReconcileEntity.ts"
 import { LabelingRules } from "../../src/Labeling/Rules.ts"
 import { RECONCILE_ENTITY_TAG, SnapshotHandoff } from "../../src/Labeling/SnapshotHandoff.ts"
+import { type GitHubRequest, GitHubTransport } from "../../src/GitHub/Transport.ts"
 import { SyncTargets } from "../../src/SyncTargets.ts"
 import { MigratedPostgresLayer } from "../support/Postgres.ts"
 import {
@@ -25,12 +26,26 @@ import {
   verifyTrack,
 } from "./support.ts"
 
-const Services = Layer.mergeAll(
-  SnapshotHandoff.layer,
-  LabelingOverview.layer,
-  ReconcileEntityLayer,
-).pipe(
+/** Records every GitHub write and answers 200, so the apply activity can be observed. */
+const seenRequests: Array<GitHubRequest> = []
+const TransportStub = Layer.succeed(GitHubTransport, {
+  request: (request) =>
+    Effect.sync(() => {
+      seenRequests.push(request)
+      return {
+        _tag: "Ok" as const,
+        status: 200,
+        body: {},
+        etag: Option.none(),
+        link: Option.none(),
+        requestId: Option.none(),
+      }
+    }),
+})
+
+const Services = Layer.mergeAll(LabelingOverview.layer, ReconcileEntityLayer).pipe(
   Layer.provideMerge(LabelingLayer),
+  Layer.provideMerge(TransportStub),
   Layer.provideMerge(WorkflowEngine.layerMemory),
   Layer.provideMerge(MigratedPostgresLayer),
 )
@@ -110,12 +125,17 @@ layer(Services, { timeout: "2 minutes" })("SnapshotHandoff against Postgres", (i
       // A retried activity is a no-op on the same identity.
       const again = yield* handoff.publish({ repositoryId, number, generation, sequence: seq })
       assert.strictEqual(again._tag, "Published")
+      // Publishing the policy activated revision 1 with nothing bound, and the
+      // backfill handed #5 off at that revision; the rule then made revision 2.
       assert.deepStrictEqual(
         (yield* outboxKeys).map((row) => row.execution_key),
-        [`reconcile:${repositoryId}:${number}:${generation}:${revision}`],
+        [
+          `reconcile:${repositoryId}:${number}:${generation}:1`,
+          `reconcile:${repositoryId}:${number}:${generation}:${revision}`,
+        ],
       )
       const pending = yield* overview.reconciliations(repositoryId)
-      assert.strictEqual(pending.length, 1)
+      assert.strictEqual(pending.length, 2)
       assert.isNull(pending[0]?.outcome)
 
       // The workflow re-qualifies the snapshot, evaluates every rule, and records the plan.
@@ -141,10 +161,26 @@ layer(Services, { timeout: "2 minutes" })("SnapshotHandoff against Postgres", (i
         SELECT outcome, selected FROM labeling_rule_evaluation WHERE repository_id = ${repositoryId} AND number = ${number}
       `
       assert.deepStrictEqual(evaluations, [{ outcome: "match", selected: true }])
-      const actions = yield* sql<{ label_id: string; action: string; status: string }>`
-        SELECT label_id, action, status FROM labeling_label_action WHERE repository_id = ${repositoryId} AND number = ${number}
+      // The apply activity wrote the label through GitHub and settled the action.
+      const actions = yield* sql<{
+        label_id: string
+        action: string
+        status: string
+        detail: string | null
+      }>`
+        SELECT label_id, action, status, detail FROM labeling_label_action WHERE repository_id = ${repositoryId} AND number = ${number}
       `
-      assert.deepStrictEqual(actions, [{ label_id: bug, action: "add", status: "planned" }])
+      assert.deepStrictEqual(actions, [
+        { label_id: bug, action: "add", status: "applied", detail: null },
+      ])
+      assert.deepStrictEqual(
+        seenRequests.map((request) => [request.method, request.url, request.body]),
+        [["POST", "/repos/effect/one/issues/5/labels", { labels: ["bug"] }]],
+      )
+      assert.deepStrictEqual(
+        done[0]?.actions.map((action) => action.status),
+        ["applied"],
+      )
 
       // Resubmitting the same identity returns the stored result.
       const duplicate = yield* ReconcileEntity.execute(identity)
@@ -162,6 +198,25 @@ layer(Services, { timeout: "2 minutes" })("SnapshotHandoff against Postgres", (i
       yield* verifyEntity
       const superseded = yield* ReconcileEntity.execute({ ...identity, snapshotGeneration: newer })
       assert.strictEqual(superseded.outcome, "superseded")
+
+      // Activation backfills every open entity whose snapshot is verified: #5
+      // already has a handoff at the newer generation, so only #6 is new
+      // once its entity scope verifies.
+      const targets = yield* SyncTargets
+      const scope6 = { _tag: "Entity", repositoryId, number: 6 } as const
+      const six = yield* targets.invalidate({ scope: scope6, sequence: Option.some(seq) })
+      yield* targets.begin(scope6, six.generation)
+      yield* targets.complete({
+        scope: scope6,
+        generation: six.generation,
+        outcome: { _tag: "Verified", watermark: Option.none() },
+      })
+      const backfilled = yield* handoff.publishOpen(repositoryId)
+      assert.strictEqual(backfilled, 2)
+      assert.include(
+        (yield* outboxKeys).map((row) => row.execution_key),
+        `reconcile:${repositoryId}:6:${six.generation}:${revision}`,
+      )
 
       const repositories = yield* overview.repositories
       assert.deepStrictEqual(

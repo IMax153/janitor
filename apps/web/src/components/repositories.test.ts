@@ -73,6 +73,7 @@ const detail: Repositories.RepositoryDetail = {
         rules: [{ ruleId: "r1", outcome: "match", selected: true }],
         actions: [{ labelId: "11", action: "add", ruleId: "r1" }],
       },
+      actions: [{ labelId: "11", action: "add", ruleId: "r1", status: "applied", detail: null }],
       completedAt: at,
     },
   ],
@@ -175,5 +176,12 @@ describe("Repositories", () => {
     expect(describePlan(detail.reconciliations[0]!.plan!, configuration)).toEqual([
       "add bug (Base is main)",
     ])
+    expect(
+      describePlan(
+        detail.reconciliations[0]!.plan!,
+        configuration,
+        detail.reconciliations[0]!.actions,
+      ),
+    ).toEqual(["add bug (Base is main) ✓"])
   })
 })

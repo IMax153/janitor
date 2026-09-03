@@ -37,8 +37,11 @@ export class RulesetActivation extends Context.Service<
     readonly promote: (
       repositoryId: GitHubRepositoryDatabaseId,
     ) => Effect.Effect<Option.Option<LabelingRevision>, RulesetActivationError>
-    /** Promotes every repository whose configured revision is ready. Returns how many. */
-    readonly promoteAll: Effect.Effect<number, RulesetActivationError>
+    /** Promotes every repository whose configured revision is ready. Returns which. */
+    readonly promoteAll: Effect.Effect<
+      ReadonlyArray<GitHubRepositoryDatabaseId>,
+      RulesetActivationError
+    >
   }
 >()("@janitor/cluster/Labeling/Activation/RulesetActivation", {
   make: Effect.gen(function* () {
@@ -121,7 +124,7 @@ export class RulesetActivation extends Context.Service<
               }),
             ),
       ),
-      Effect.map((promoted) => promoted.length),
+      Effect.map((promoted) => promoted.map((row) => row.repository_id)),
       Effect.withSpan("RulesetActivation.promoteAll"),
     )
 

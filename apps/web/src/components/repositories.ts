@@ -942,7 +942,7 @@ const reconciliationsSection = (
                           ? h.span([h.Class("text-muted-foreground")], ["no changes"])
                           : h.ul(
                               [h.Class("flex flex-col gap-0.5")],
-                              describePlan(row.plan, view).map((line, index) =>
+                              describePlan(row.plan, view, row.actions).map((line, index) =>
                                 h.li(
                                   [
                                     h.DataAttribute(

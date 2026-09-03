@@ -1,6 +1,6 @@
 import type { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
 import type { SyncGeneration } from "@janitor/domain/GitHub/Sync"
-import type { GitHubWebhookJournalSequence } from "@janitor/domain/GitHub/WebhookJournal"
+import { GitHubWebhookJournalSequence } from "@janitor/domain/GitHub/WebhookJournal"
 import {
   type ReconciliationIdentity,
   reconciliationKey,
@@ -40,6 +40,9 @@ export interface HandoffRequest {
   readonly sequence: GitHubWebhookJournalSequence
 }
 
+/** How many open entities one activation backfill considers. */
+export const BACKFILL_LIMIT = 500
+
 export type HandoffResult =
   | { readonly _tag: "Published"; readonly identity: ReconciliationIdentity }
   | {
@@ -67,6 +70,14 @@ export class SnapshotHandoff extends Context.Service<
     readonly publish: (
       request: HandoffRequest,
     ) => Effect.Effect<HandoffResult, SnapshotHandoffError>
+    /**
+     * Hands off every open entity whose snapshot is already verified, so a
+     * newly active revision evaluates existing items and not only the next
+     * one to change. Returns how many were published.
+     */
+    readonly publishOpen: (
+      repositoryId: GitHubRepositoryDatabaseId,
+    ) => Effect.Effect<number, SnapshotHandoffError>
   }
 >()("@janitor/cluster/Labeling/SnapshotHandoff/SnapshotHandoff", {
   make: Effect.gen(function* () {
@@ -157,8 +168,55 @@ export class SnapshotHandoff extends Context.Service<
       return { _tag: "Published", identity } as const
     })
 
-    return { publish }
+    const publishOpen = Effect.fn("SnapshotHandoff.publishOpen")(function* (
+      repositoryId: GitHubRepositoryDatabaseId,
+    ) {
+      const entities = yield* readModel
+        .listOpenEntities(repositoryId, BACKFILL_LIMIT)
+        .pipe(wrap("listOpenEntities"))
+      let published = 0
+      for (const { entity } of entities) {
+        const target = yield* targets
+          .get({ _tag: "Entity", repositoryId, number: entity.number })
+          .pipe(wrap("getTarget"))
+        if (Option.isNone(target)) continue
+        const result = yield* publish({
+          repositoryId,
+          number: entity.number,
+          generation: target.value.verifiedGeneration,
+          sequence: target.value.verifiedSequence ?? GitHubWebhookJournalSequence.make("0"),
+        })
+        if (result._tag === "Published") published++
+      }
+      yield* Effect.logInfo("Backfilled qualified snapshots after activation").pipe(
+        Effect.annotateLogs({ repositoryId, published, considered: entities.length }),
+      )
+      return published
+    })
+
+    return { publish, publishOpen }
   }),
 }) {
   static readonly layer = Layer.effect(this, this.make)
 }
+
+/**
+ * Runs the backfill when the handoff service is present. Optional so
+ * synchronization tests without labeling still run, and never fails the
+ * caller: a lost backfill is repaired by the next refresh of each entity.
+ */
+export const backfillAfterActivation = (repositoryId: GitHubRepositoryDatabaseId) =>
+  Effect.serviceOption(SnapshotHandoff).pipe(
+    Effect.flatMap((handoff) =>
+      Option.isNone(handoff)
+        ? Effect.void
+        : handoff.value.publishOpen(repositoryId).pipe(
+            Effect.asVoid,
+            Effect.catchCause((cause) =>
+              Effect.logError("Backfill after activation failed", cause).pipe(
+                Effect.annotateLogs({ repositoryId }),
+              ),
+            ),
+          ),
+    ),
+  )
