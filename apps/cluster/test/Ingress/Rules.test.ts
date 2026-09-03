@@ -96,7 +96,57 @@ const put = (body: unknown, path = `/repositories/${repositoryId}/rules`) =>
 
 const saveBody = { expectedRevision: 1, ruleset: { rules: [] } }
 
+const post = (body: unknown, path: string) =>
+  new Request(`https://janitor.example${path}`, {
+    method: "POST",
+    headers: { "sec-fetch-site": "same-origin", "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+
 describe("RulesRoutes", () => {
+  it.effect("previews a draft ruleset on a same-origin request", () =>
+    withHandler(
+      {
+        load: () => Effect.die("unused"),
+        save: () => Effect.die("unused"),
+        preview: ({ ruleset }) =>
+          Effect.succeed({
+            issues: [],
+            entities: [
+              {
+                number: 5,
+                snapshot: {
+                  kind: "pull_request",
+                  title: "Trace",
+                  authorLogin: "octocat",
+                  state: "open",
+                  baseRef: "main",
+                  draft: false,
+                  labels: [],
+                },
+                plan: { actions: [], matched: ruleset.rules.map((rule) => rule.id), conflicts: [] },
+              },
+            ],
+          }),
+      },
+      (handler) =>
+        Effect.gen(function* () {
+          const response = yield* Effect.promise(() =>
+            handler(
+              post({ ruleset: { rules: [] } }, `/repositories/${repositoryId}/rules/preview`),
+            ),
+          )
+          assert.strictEqual(response.status, 200)
+          const body = yield* Effect.promise(() => response.json())
+          assert.strictEqual(body.entities[0].number, 5)
+          const malformed = yield* Effect.promise(() =>
+            handler(post({ nope: true }, `/repositories/${repositoryId}/rules/preview`)),
+          )
+          assert.strictEqual(malformed.status, 400)
+        }),
+    ),
+  )
+
   it.effect("loads the view and 404s an unknown repository", () =>
     withHandler(
       {
@@ -105,6 +155,7 @@ describe("RulesRoutes", () => {
             ? Effect.succeed(view)
             : Effect.fail(new RepositoryNotFound({ repositoryId: id })),
         save: () => Effect.die("unused"),
+        preview: () => Effect.die("unused"),
       },
       (handler) =>
         Effect.gen(function* () {
@@ -136,6 +187,7 @@ describe("RulesRoutes", () => {
             seen.push(request)
             return { ...view, configuredRevision: RulesetRevision.make(2) }
           }),
+        preview: () => Effect.die("unused"),
       },
       (handler) =>
         Effect.gen(function* () {
@@ -157,6 +209,7 @@ describe("RulesRoutes", () => {
         {
           load: () => Effect.die("unused"),
           save: () => Effect.fail(new RulesetConflict({ current: view })),
+          preview: () => Effect.die("unused"),
         },
         (handler) => Effect.promise(() => handler(put(saveBody))),
       )
@@ -172,6 +225,7 @@ describe("RulesRoutes", () => {
                 issues: [{ ruleId: "r1" as never, code: "unresolved-label", message: "nope" }],
               }),
             ),
+          preview: () => Effect.die("unused"),
         },
         (handler) => Effect.promise(() => handler(put(saveBody))),
       )
@@ -182,13 +236,21 @@ describe("RulesRoutes", () => {
       )
 
       const malformed = yield* withHandler(
-        { load: () => Effect.die("unused"), save: () => Effect.die("must not run") },
+        {
+          load: () => Effect.die("unused"),
+          save: () => Effect.die("must not run"),
+          preview: () => Effect.die("unused"),
+        },
         (handler) => Effect.promise(() => handler(put({ expectedRevision: -1 }))),
       )
       assert.strictEqual(malformed.status, 400)
 
       const crossOrigin = yield* withHandler(
-        { load: () => Effect.die("unused"), save: () => Effect.die("must not run") },
+        {
+          load: () => Effect.die("unused"),
+          save: () => Effect.die("must not run"),
+          preview: () => Effect.die("unused"),
+        },
         (handler) =>
           Effect.promise(() =>
             handler(
@@ -205,27 +267,33 @@ describe("RulesRoutes", () => {
   )
 
   it.effect("lists repositories and reconciliations", () =>
-    withHandler({ load: () => Effect.die("unused"), save: () => Effect.die("unused") }, (handler) =>
-      Effect.gen(function* () {
-        const repositories = yield* Effect.promise(() =>
-          handler(new Request("https://janitor.example/repositories")),
-        )
-        assert.strictEqual(repositories.status, 200)
-        const rows = yield* Effect.promise(() => repositories.json())
-        assert.deepStrictEqual(
-          rows.map((row: { repo: string }) => row.repo),
-          ["one"],
-        )
-        const reconciliations = yield* Effect.promise(() =>
-          handler(
-            new Request(`https://janitor.example/repositories/${repositoryId}/reconciliations`),
-          ),
-        )
-        assert.strictEqual(reconciliations.status, 200)
-        const body = yield* Effect.promise(() => reconciliations.json())
-        assert.strictEqual(body[0].outcome, "evaluated")
-        assert.strictEqual(body[0].snapshotGeneration, "3")
-      }),
+    withHandler(
+      {
+        load: () => Effect.die("unused"),
+        save: () => Effect.die("unused"),
+        preview: () => Effect.die("unused"),
+      },
+      (handler) =>
+        Effect.gen(function* () {
+          const repositories = yield* Effect.promise(() =>
+            handler(new Request("https://janitor.example/repositories")),
+          )
+          assert.strictEqual(repositories.status, 200)
+          const rows = yield* Effect.promise(() => repositories.json())
+          assert.deepStrictEqual(
+            rows.map((row: { repo: string }) => row.repo),
+            ["one"],
+          )
+          const reconciliations = yield* Effect.promise(() =>
+            handler(
+              new Request(`https://janitor.example/repositories/${repositoryId}/reconciliations`),
+            ),
+          )
+          assert.strictEqual(reconciliations.status, 200)
+          const body = yield* Effect.promise(() => reconciliations.json())
+          assert.strictEqual(body[0].outcome, "evaluated")
+          assert.strictEqual(body[0].snapshotGeneration, "3")
+        }),
     ),
   )
 })

@@ -1,5 +1,6 @@
 import { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
 import { ReconciliationRecord, RepositoryOverview } from "@janitor/domain/Labeling/Reconciliation"
+import { PreviewRulesetRequest, RulesetPreview } from "@janitor/domain/Labeling/Evaluation"
 import { RulesetIssue, RulesetView, SaveRulesetRequest } from "@janitor/domain/Labeling/Ruleset"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -15,6 +16,8 @@ import { SameOriginMiddleware } from "./Sync.ts"
 const PathParams = Schema.Struct({ repositoryId: GitHubRepositoryDatabaseId })
 const decodePath = HttpRouter.schemaPathParams(PathParams)
 const decodeBody = HttpServerRequest.schemaBodyJson(SaveRulesetRequest)
+const decodePreviewBody = HttpServerRequest.schemaBodyJson(PreviewRulesetRequest)
+const respondPreview = HttpServerResponse.schemaJson(RulesetPreview)
 
 const respondView = HttpServerResponse.schemaJson(RulesetView)
 const respondRepositories = HttpServerResponse.schemaJson(Schema.Array(RepositoryOverview))
@@ -84,6 +87,25 @@ export const RulesetSaveRoute = HttpRouter.add(
   ),
 ).pipe(Layer.provide(SameOriginMiddleware))
 
+/** The editor's test bench: evaluate a draft against recent open entities. */
+export const RulesetPreviewRoute = HttpRouter.add(
+  "POST",
+  "/repositories/:repositoryId/rules/preview",
+  Effect.gen(function* () {
+    const { repositoryId } = yield* decodePath
+    const body = yield* decodePreviewBody
+    const rulesets = yield* LabelingRulesets
+    return yield* respondPreview(yield* rulesets.preview({ repositoryId, ruleset: body.ruleset }))
+  }).pipe(
+    Effect.catchTags({
+      SchemaError: () => Effect.succeed(badRequestResponse),
+      HttpServerError: () => Effect.succeed(badRequestResponse),
+      RepositoryNotFound: () => Effect.succeed(notFoundResponse),
+    }),
+    Effect.catchCause(unavailable("preview")),
+  ),
+).pipe(Layer.provide(SameOriginMiddleware))
+
 export const RepositoriesRoute = HttpRouter.add(
   "GET",
   "/repositories",
@@ -109,6 +131,7 @@ export const ReconciliationsRoute = HttpRouter.add(
 export const RulesRoutesLayer = Layer.mergeAll(
   RulesetLoadRoute,
   RulesetSaveRoute,
+  RulesetPreviewRoute,
   RepositoriesRoute,
   ReconciliationsRoute,
 )

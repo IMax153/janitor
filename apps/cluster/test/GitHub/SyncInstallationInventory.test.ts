@@ -127,6 +127,7 @@ const run = (
             getRepository: () => Effect.succeedNone,
             getEntity: () => Effect.succeedNone,
             listLabels: () => Effect.succeed([]),
+            listOpenEntities: () => Effect.succeed([]),
           }),
         ),
         Layer.provideMerge(WorkflowEngine.layerMemory),

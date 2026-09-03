@@ -1,14 +1,20 @@
 import { assert, layer } from "@effect/vitest"
+import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
+import * as Schema from "effect/Schema"
 import {
   GitHubAccountDatabaseId,
+  GitHubCommitSha,
   GitHubInstallationId,
   GitHubLabelDatabaseId,
   GitHubLabelNodeId,
+  GitHubPullRequestDatabaseId,
+  GitHubPullRequestNodeId,
   GitHubRepositoryDatabaseId,
 } from "@janitor/domain/GitHub/Id"
+import { GitHubIssueApi } from "@janitor/domain/GitHub/Api"
 import { GitHubWebhookJournalSequence } from "@janitor/domain/GitHub/WebhookJournal"
 import { type Rule, RuleId, RulesetRevision } from "@janitor/domain/Labeling/Ruleset"
 import { GitHubReadModel } from "../../src/GitHub/ReadModel.ts"
@@ -72,7 +78,79 @@ const seed = Effect.gen(function* () {
   })
 })
 
+const seedEntities = Effect.gen(function* () {
+  const readModel = yield* GitHubReadModel
+  for (const [number, base] of [
+    [5, "main"],
+    [6, "develop"],
+  ] as const) {
+    const issue = yield* Schema.decodeUnknownEffect(GitHubIssueApi)({
+      id: 1000 + number,
+      node_id: `I_${number}`,
+      number,
+      title: `Change ${number}`,
+      body: null,
+      state: "open",
+      user: { id: 9, login: "octocat" },
+      labels: [],
+      updated_at: `2026-09-03T14:0${number}:00Z`,
+      pull_request: { url: "https://api.github.com/x" },
+    })
+    yield* readModel.applyIssue({ repositoryId, sequence: seq, issue })
+    yield* readModel.applyPullRequestDetails({
+      repositoryId,
+      sequence: seq,
+      pullRequest: {
+        id: GitHubPullRequestDatabaseId.make(String(2000 + number)),
+        nodeId: GitHubPullRequestNodeId.make(`PR_${number}`),
+        number,
+        state: "open",
+        draft: false,
+        mergedAt: null,
+        updatedAt: DateTime.makeUnsafe(`2026-09-03T14:0${number}:00.000Z`),
+        head: { sha: GitHubCommitSha.make("a".repeat(40)) },
+        base: { ref: base },
+      },
+    })
+  }
+})
+
 layer(RulesetsLayer, { timeout: "2 minutes" })("LabelingRulesets against Postgres", (it) => {
+  it.effect("previews a draft against recent open entities without saving", () =>
+    Effect.gen(function* () {
+      yield* seed
+      yield* seedEntities
+      const rulesets = yield* LabelingRulesets
+      const preview = yield* rulesets.preview({
+        repositoryId,
+        ruleset: {
+          rules: [
+            baseMain,
+            { ...baseMain, id: RuleId.make("bad"), labels: [GitHubLabelDatabaseId.make("404")] },
+          ],
+          conflicts: "last-rule-wins",
+        },
+      })
+      assert.deepStrictEqual(
+        preview.issues.map((issue) => [issue.ruleId, issue.code]),
+        [["bad", "unresolved-label"]],
+      )
+      // Most recently updated first; only the pull request against main gets the label.
+      assert.deepStrictEqual(
+        preview.entities.map((entity) => [
+          entity.number,
+          entity.snapshot.baseRef,
+          entity.plan.actions.map((action) => action.labelId),
+        ]),
+        [
+          [6, "develop", []],
+          [5, "main", [bug, GitHubLabelDatabaseId.make("404")]],
+        ],
+      )
+      assert.strictEqual((yield* rulesets.load(repositoryId)).configuredRevision, 0)
+    }),
+  )
+
   it.effect("loads an empty ruleset with synchronized labels and 404s an unknown repository", () =>
     Effect.gen(function* () {
       yield* seed

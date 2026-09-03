@@ -1,6 +1,12 @@
 import type { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
 import type { GitHubRepositoryTrack } from "@janitor/domain/GitHub/Sync"
 import {
+  type EntitySnapshot,
+  evaluate,
+  type PreviewEntity,
+  type RulesetPreview,
+} from "@janitor/domain/Labeling/Evaluation"
+import {
   emptyRuleset,
   requiredTracks,
   Ruleset,
@@ -48,6 +54,14 @@ export class RulesetInvalid extends Data.TaggedError("RulesetInvalid")<{
   readonly issues: ReadonlyArray<RulesetIssue>
 }> {}
 
+export interface PreviewRuleset {
+  readonly repositoryId: GitHubRepositoryDatabaseId
+  readonly ruleset: Ruleset
+}
+
+/** How many open entities a preview evaluates. */
+export const PREVIEW_ENTITY_LIMIT = 25
+
 export interface SaveRuleset {
   readonly repositoryId: GitHubRepositoryDatabaseId
   readonly expectedRevision: RulesetRevision
@@ -87,6 +101,10 @@ export class LabelingRulesets extends Context.Service<
       RulesetView,
       RepositoryNotFound | RulesetConflict | RulesetInvalid | LabelingRulesetsError
     >
+    /** Validates and evaluates a draft against recent open entities without saving. */
+    readonly preview: (
+      request: PreviewRuleset,
+    ) => Effect.Effect<RulesetPreview, RepositoryNotFound | LabelingRulesetsError>
   }
 >()("@janitor/cluster/Labeling/Rulesets/LabelingRulesets", {
   make: Effect.gen(function* () {
@@ -192,6 +210,38 @@ export class LabelingRulesets extends Context.Service<
         return result
       })
 
+    const preview = Effect.fn("LabelingRulesets.preview")(function* (request: PreviewRuleset) {
+      yield* requireRepository(request.repositoryId)
+      const [{ labels }, views] = yield* Effect.all(
+        [
+          synchronizedLabels(request.repositoryId),
+          readModel
+            .listOpenEntities(request.repositoryId, PREVIEW_ENTITY_LIMIT)
+            .pipe(wrap("listOpenEntities")),
+        ],
+        { concurrency: 2 },
+      )
+      const issues = validateRuleset(request.ruleset, labels)
+      const entities = views.map(({ entity, pullRequest, labels: entityLabels }): PreviewEntity => {
+        const snapshot: EntitySnapshot = {
+          kind: entity.kind,
+          title: entity.title,
+          authorLogin: entity.authorLogin,
+          state: entity.state,
+          baseRef: Option.map(pullRequest, (pr) => pr.baseRef).pipe(Option.getOrNull),
+          draft: Option.map(pullRequest, (pr) => pr.draft).pipe(Option.getOrNull),
+          labels: entityLabels.map((label) => label.labelId),
+        }
+        return {
+          number: entity.number,
+          snapshot,
+          plan: evaluate({ ruleset: request.ruleset, snapshot, applied: new Set() }),
+        }
+      })
+      const result: RulesetPreview = { issues, entities }
+      return result
+    })
+
     const load = Effect.fn("LabelingRulesets.load")(function* (
       repositoryId: GitHubRepositoryDatabaseId,
     ) {
@@ -276,7 +326,7 @@ export class LabelingRulesets extends Context.Service<
       return result
     })
 
-    return { load, save }
+    return { load, save, preview }
   }),
 }) {
   static readonly layer = Layer.effect(this, this.make)

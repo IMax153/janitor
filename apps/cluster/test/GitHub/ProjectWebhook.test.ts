@@ -93,6 +93,7 @@ const runWorkflow = (
             getRepository: () => Effect.succeedNone,
             getEntity: () => Effect.succeedNone,
             listLabels: () => Effect.succeed([]),
+            listOpenEntities: () => Effect.succeed([]),
           }),
         ),
         Layer.provide(

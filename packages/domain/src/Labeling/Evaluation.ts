@@ -7,7 +7,8 @@ import {
   type Rule,
   RuleId,
   RuleName,
-  type Ruleset,
+  Ruleset,
+  RulesetIssue,
 } from "./Ruleset.ts"
 
 /**
@@ -167,3 +168,28 @@ export const evaluate = ({ ruleset, snapshot, applied }: EvaluationInput): Plan 
   actions.sort((left, right) => left.labelId.localeCompare(right.labelId))
   return { actions, matched, conflicts }
 }
+
+/** A draft ruleset the editor wants evaluated without saving it. */
+export const PreviewRulesetRequest = Schema.Struct({ ruleset: Ruleset }).annotate({
+  identifier: "PreviewRulesetRequest",
+})
+export type PreviewRulesetRequest = typeof PreviewRulesetRequest.Type
+
+/** One open entity and what the draft would do to it. */
+export const PreviewEntity = Schema.Struct({
+  number: Schema.Int,
+  snapshot: EntitySnapshot,
+  plan: Plan,
+}).annotate({ identifier: "PreviewEntity" })
+export type PreviewEntity = typeof PreviewEntity.Type
+
+/**
+ * The editor's test bench: semantic issues the save would reject, and the
+ * plan for each of the most recently updated open entities. Ownership is
+ * unknown for a draft, so `remove-if-applied` never removes here.
+ */
+export const RulesetPreview = Schema.Struct({
+  issues: Schema.Array(RulesetIssue),
+  entities: Schema.Array(PreviewEntity),
+}).annotate({ identifier: "RulesetPreview" })
+export type RulesetPreview = typeof RulesetPreview.Type

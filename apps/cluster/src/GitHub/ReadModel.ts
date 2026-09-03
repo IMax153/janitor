@@ -77,6 +77,12 @@ export interface IssueObservation {
   readonly sequence: GitHubWebhookJournalSequence
 }
 
+export interface EntityView {
+  readonly entity: GitHubEntityRecord
+  readonly pullRequest: Option.Option<GitHubPullRequestRecord>
+  readonly labels: ReadonlyArray<GitHubEntityLabelRecord>
+}
+
 export interface PullRequestDetailsObservation {
   readonly repositoryId: GitHubRepositoryDatabaseId
   readonly pullRequest: GitHubPullRequestApi
@@ -226,6 +232,11 @@ export class GitHubReadModel extends Context.Service<
     readonly listLabels: (
       repositoryId: GitHubRepositoryDatabaseId,
     ) => Effect.Effect<ReadonlyArray<GitHubLabelRecord>, GitHubReadModelError>
+    /** Open entities, most recently updated on GitHub first. */
+    readonly listOpenEntities: (
+      repositoryId: GitHubRepositoryDatabaseId,
+      limit: number,
+    ) => Effect.Effect<ReadonlyArray<EntityView>, GitHubReadModelError>
   }
 >()("@janitor/cluster/GitHub/ReadModel/GitHubReadModel", {
   make: Effect.gen(function* () {
@@ -658,59 +669,90 @@ export class GitHubReadModel extends Context.Service<
       return Option.some(record)
     })
 
+    const toEntityRecord = (row: typeof EntityRow.Type): GitHubEntityRecord => ({
+      repositoryId: row.repository_id,
+      number: row.number,
+      kind: row.kind,
+      issueId: row.issue_id,
+      issueNodeId: row.issue_node_id,
+      title: row.title,
+      body: row.body,
+      authorLogin: row.author_login,
+      authorId: row.author_id,
+      state: row.state,
+      githubUpdatedAt: row.github_updated_at,
+      projectedSequence: sequenceOf(row.projected_sequence),
+      observedAt: row.observed_at,
+    })
+
+    const toPullRequestRecord = (pr: typeof PullRequestRow.Type): GitHubPullRequestRecord => ({
+      repositoryId: pr.repository_id,
+      number: pr.number,
+      pullRequestId: pr.pull_request_id,
+      pullRequestNodeId: pr.pull_request_node_id,
+      baseRef: pr.base_ref,
+      draft: pr.draft,
+      headSha: pr.head_sha,
+      merged: pr.merged,
+    })
+
+    const toEntityLabelRecord = (label: typeof EntityLabelRow.Type): GitHubEntityLabelRecord => ({
+      repositoryId: label.repository_id,
+      number: label.number,
+      labelId: label.label_id,
+    })
+
+    /** Joins pull request details and labels onto entity rows of one repository. */
+    const assembleEntities = (
+      operation: string,
+      repositoryId: GitHubRepositoryDatabaseId,
+      rows: ReadonlyArray<typeof EntityRow.Type>,
+    ) =>
+      Effect.gen(function* () {
+        if (rows.length === 0) return []
+        const numbers = rows.map((row) => row.number)
+        const pullRequests = yield* sql`
+          SELECT * FROM github_pull_request
+          WHERE repository_id = ${repositoryId} AND number IN ${sql.in(numbers)}
+        `.pipe(Effect.flatMap(rowsToRecords(PullRequestRow)), wrap(operation))
+        const labels = yield* sql`
+          SELECT * FROM github_entity_label
+          WHERE repository_id = ${repositoryId} AND number IN ${sql.in(numbers)}
+          ORDER BY label_id
+        `.pipe(Effect.flatMap(rowsToRecords(EntityLabelRow)), wrap(operation))
+        const pullRequestByNumber = new Map(pullRequests.map((pr) => [pr.number, pr]))
+        return rows.map((row): EntityView => ({
+          entity: toEntityRecord(row),
+          pullRequest: Option.map(
+            Option.fromNullishOr(pullRequestByNumber.get(row.number)),
+            toPullRequestRecord,
+          ),
+          labels: labels.filter((label) => label.number === row.number).map(toEntityLabelRecord),
+        }))
+      })
+
     const getEntity = Effect.fn("GitHubReadModel.getEntity")(function* (
       repositoryId: GitHubRepositoryDatabaseId,
       number: number,
     ) {
-      const entities = yield* sql`
+      const rows = yield* sql`
         SELECT * FROM github_entity WHERE repository_id = ${repositoryId} AND number = ${number}
       `.pipe(Effect.flatMap(rowsToRecords(EntityRow)), wrap("getEntity"))
-      const row = entities[0]
-      if (row === undefined) return Option.none()
-      const pullRequests = yield* sql`
-        SELECT * FROM github_pull_request WHERE repository_id = ${repositoryId} AND number = ${number}
-      `.pipe(Effect.flatMap(rowsToRecords(PullRequestRow)), wrap("getEntity"))
-      const labels = yield* sql`
-        SELECT * FROM github_entity_label WHERE repository_id = ${repositoryId} AND number = ${number}
-        ORDER BY label_id
-      `.pipe(Effect.flatMap(rowsToRecords(EntityLabelRow)), wrap("getEntity"))
-      const entity: GitHubEntityRecord = {
-        repositoryId: row.repository_id,
-        number: row.number,
-        kind: row.kind,
-        issueId: row.issue_id,
-        issueNodeId: row.issue_node_id,
-        title: row.title,
-        body: row.body,
-        authorLogin: row.author_login,
-        authorId: row.author_id,
-        state: row.state,
-        githubUpdatedAt: row.github_updated_at,
-        projectedSequence: sequenceOf(row.projected_sequence),
-        observedAt: row.observed_at,
-      }
-      const pullRequest = Option.map(
-        Option.fromNullishOr(pullRequests[0]),
-        (pr): GitHubPullRequestRecord => ({
-          repositoryId: pr.repository_id,
-          number: pr.number,
-          pullRequestId: pr.pull_request_id,
-          pullRequestNodeId: pr.pull_request_node_id,
-          baseRef: pr.base_ref,
-          draft: pr.draft,
-          headSha: pr.head_sha,
-          merged: pr.merged,
-        }),
-      )
-      return Option.some({
-        entity,
-        pullRequest,
-        labels: labels.map((label): GitHubEntityLabelRecord => ({
-          repositoryId: label.repository_id,
-          number: label.number,
-          labelId: label.label_id,
-        })),
-      })
+      const views = yield* assembleEntities("getEntity", repositoryId, rows)
+      return Option.fromNullishOr(views[0])
+    })
+
+    const listOpenEntities = Effect.fn("GitHubReadModel.listOpenEntities")(function* (
+      repositoryId: GitHubRepositoryDatabaseId,
+      limit: number,
+    ) {
+      const rows = yield* sql`
+        SELECT * FROM github_entity
+        WHERE repository_id = ${repositoryId} AND state = 'open'
+        ORDER BY github_updated_at DESC, number DESC
+        LIMIT ${limit}
+      `.pipe(Effect.flatMap(rowsToRecords(EntityRow)), wrap("listOpenEntities"))
+      return yield* assembleEntities("listOpenEntities", repositoryId, rows)
     })
 
     const listLabels = Effect.fn("GitHubReadModel.listLabels")(function* (
@@ -757,6 +799,7 @@ export class GitHubReadModel extends Context.Service<
       getInstallation,
       getRepository,
       getEntity,
+      listOpenEntities,
       listLabels,
     }
   }),

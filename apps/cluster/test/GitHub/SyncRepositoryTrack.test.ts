@@ -127,6 +127,7 @@ const services = (
       getRepository: () => Effect.succeed(stored),
       getEntity: () => Effect.succeedNone,
       listLabels: () => Effect.succeed([]),
+      listOpenEntities: () => Effect.succeed([]),
     }),
   )
 
