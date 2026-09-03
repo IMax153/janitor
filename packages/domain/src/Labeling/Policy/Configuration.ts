@@ -152,6 +152,7 @@ export const RuleIssueCode = Schema.Literals([
   "duplicate-label",
   "policy-not-published",
   "policy-target-mismatch",
+  "classifier-preserve-only",
 ]).annotate({ identifier: "RuleIssueCode" })
 export type RuleIssueCode = typeof RuleIssueCode.Type
 
@@ -232,3 +233,30 @@ export const AuditEntry = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
 }).annotate({ identifier: "AuditEntry" })
 export type AuditEntry = typeof AuditEntry.Type
+
+// AI CONSENT
+
+/**
+ * Repository consent for classifier evaluation (design: "AI evaluator").
+ * `Draining` refuses new leases and becomes `Disabled` once every active
+ * lease has finished or expired; a call that holds a lease cannot be recalled.
+ */
+export const AiConsentState = Schema.Literals(["enabled", "draining", "disabled"]).annotate({
+  identifier: "AiConsentState",
+})
+export type AiConsentState = typeof AiConsentState.Type
+
+export const AiConsent = Schema.Struct({
+  repositoryId: GitHubRepositoryDatabaseId,
+  state: AiConsentState,
+  /** Provider and model the repository consented to; fixed per consent grant. */
+  provider: Schema.String,
+  model: Schema.String,
+  activeLeases: Schema.Int,
+  updatedAt: Schema.DateTimeUtc,
+}).annotate({ identifier: "AiConsent" })
+export type AiConsent = typeof AiConsent.Type
+
+export const SetAiConsentRequest = Schema.Struct({
+  enabled: Schema.Boolean,
+}).annotate({ identifier: "SetAiConsentRequest" })

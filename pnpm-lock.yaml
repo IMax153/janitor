@@ -229,6 +229,9 @@ catalogs:
     '@codemirror/view':
       specifier: 6.43.8
       version: 6.43.8
+    '@effect/ai-openai-compat':
+      specifier: 4.0.0-rc.112
+      version: 4.0.0-rc.112
     '@effect/platform-browser':
       specifier: 4.0.0-rc.112
       version: 4.0.0-rc.112
@@ -356,6 +359,9 @@ importers:
 
   apps/cluster:
     dependencies:
+      '@effect/ai-openai-compat':
+        specifier: 'catalog:'
+        version: 4.0.0-rc.112(effect@effect+packages+effect)
       '@effect/platform-cloudflare':
         specifier: file:../../vendor/effect-platform-cloudflare-f4143802256d135864f15314fc37385e919999b1.tgz
         version: file:vendor/effect-platform-cloudflare-f4143802256d135864f15314fc37385e919999b1.tgz(alchemy@2.0.0-beta.75(patch_hash=a4f8aa9ab249f7d634131dfab1c09afac35f38dab226a3e9113f0c509fe0110f)(@effect/platform-node@4.0.0-rc.112(effect@effect+packages+effect)(redis@6.2.1))(@effect/sql-pg@4.0.0-rc.112(effect@effect+packages+effect))(@types/node@24.13.3)(@voidzero-dev/vite-plus-core@0.3.0(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.20.6)(typescript@7.0.2)(yaml@2.9.0))(effect@effect+packages+effect)(pg@8.23.0)(typescript@7.0.2)(ws@8.21.3))(effect@effect+packages+effect)
@@ -726,6 +732,11 @@ packages:
     resolution: {integrity: sha512-VW2YdbblVHhYww5JVtOjFlv3jBFl7xlt6/xTfkNxxgXgzJ5GYVlD3gPgBIpGy9Pcnv9rVRA6CL7QZeYeu47c9Q==}
     peerDependencies:
       effect: '>=4.0.0-rc.112 || >=4.0.0'
+
+  '@effect/ai-openai-compat@4.0.0-rc.112':
+    resolution: {integrity: sha512-bfNYHgfjhzKhDwaw2na75JshGACrawSXWqqzTncBtBHpUIhZ+VHF2I5AdgCmfh6fnAuvhxcuJnzrixGOkG9YZw==}
+    peerDependencies:
+      effect: ^4.0.0-rc.112
 
   '@effect/platform-browser@4.0.0-rc.112':
     resolution: {integrity: sha512-GSlqNDnjILz2EqOFPhVdMEHxlPq6SGb8+KOpNnLfRvVJjXRTMawEO+v1PCuwt2CHAqESbJAa2Nk+qcQvTrv4MQ==}
@@ -4610,6 +4621,10 @@ snapshots:
   '@distilled.cloud/railway@1.0.0-rc.8(effect@effect+packages+effect)':
     dependencies:
       '@distilled.cloud/core': 1.0.0-rc.8(patch_hash=757f50dd8db9ee9e6fb4d07f2d079825a3dd4bda739218437746e8f3751a6653)(effect@effect+packages+effect)
+      effect: link:../effect/packages/effect
+
+  '@effect/ai-openai-compat@4.0.0-rc.112(effect@effect+packages+effect)':
+    dependencies:
       effect: link:../effect/packages/effect
 
   '@effect/platform-browser@4.0.0-rc.112(effect@4.0.0-rc.112)':

@@ -161,9 +161,12 @@ layer(Services, { timeout: "2 minutes" })("Policies and rules against Postgres",
         },
         actor,
       )
-      assert.deepStrictEqual(referencing.draft.matchesWhen, {
-        all: [{ policy: "Base is main" }, { fact: "draft", operator: "is", value: false }],
-      })
+      assert.deepStrictEqual(
+        "matchesWhen" in referencing.draft ? referencing.draft.matchesWhen : null,
+        {
+          all: [{ policy: "Base is main" }, { fact: "draft", operator: "is", value: false }],
+        },
+      )
       const publishedReferencing = yield* policies.publish(
         repositoryId,
         referencing.policy.policyId,

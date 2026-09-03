@@ -1,6 +1,6 @@
 import { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
 import { compile } from "@janitor/domain/Labeling/Policy/Compile"
-import { LabelingRevision } from "@janitor/domain/Labeling/Policy/Configuration"
+import { LabelingRevision, PolicyVersionId } from "@janitor/domain/Labeling/Policy/Configuration"
 import { evaluate, type Resolver } from "@janitor/domain/Labeling/Policy/Evaluate"
 import { type FactSnapshot, snapshotFacts } from "@janitor/domain/Labeling/Policy/Facts"
 import { plan, type RuleBinding } from "@janitor/domain/Labeling/Policy/Plan"
@@ -26,6 +26,7 @@ import {
   type LabelingConfigurationError,
   type RepositoryNotFound,
 } from "./Configuration.ts"
+import { classifyOrUnknown } from "./Classifier.ts"
 import { Policies } from "./Policies.ts"
 
 export class LabelingTestError extends Data.TaggedError("LabelingTestError")<{
@@ -142,12 +143,28 @@ export class LabelingTest extends Context.Service<
             }
             program = version.program
           }
-          return {
-            _tag: "Evaluated",
-            entities: views.map((view) =>
-              describe(view, evaluate({ program, snapshot: entityFacts(view), resolve }), null),
+          // Drafts are never cached; published policies cache by their version.
+          const versionId =
+            request.subject._tag === "Policy"
+              ? (resolve(request.subject.policyId)?.versionId ?? "draft")
+              : "draft"
+          const entities = yield* Effect.forEach(views, (view) =>
+            Effect.map(
+              program.evaluator._tag === "Classifier"
+                ? classifyOrUnknown({
+                    repositoryId,
+                    number: view.entity.number,
+                    policyVersionId: PolicyVersionId.make(versionId),
+                    program,
+                    evaluator: program.evaluator,
+                    snapshot: entityFacts(view),
+                    resolve,
+                  })
+                : Effect.succeed(evaluate({ program, snapshot: entityFacts(view), resolve })),
+              (evaluation) => describe(view, evaluation, null),
             ),
-          } as const
+          )
+          return { _tag: "Evaluated", entities } as const
         }
         case "Configuration": {
           const pointer = yield* sql`
@@ -168,19 +185,27 @@ export class LabelingTest extends Context.Service<
             snapshot.value.versions.map((version) => [version.policyId, version]),
           )
           const resolve: Resolver = (policyId) => byPolicy.get(policyId)
-          return {
-            _tag: "Evaluated",
-            entities: views.map((view) => {
+          const entities = yield* Effect.forEach(views, (view) =>
+            Effect.gen(function* () {
               const facts = entityFacts(view)
               const outcomes = new Map<RuleBinding["id"], Outcome>()
               for (const rule of snapshot.value.rules) {
                 const version = versions.get(rule.policyVersionId)
-                outcomes.set(
-                  rule.id,
+                const outcome: Outcome =
                   version === undefined
                     ? "unknown"
-                    : evaluate({ program: version.program, snapshot: facts, resolve }).outcome,
-                )
+                    : version.program.evaluator._tag === "Classifier"
+                      ? (yield* classifyOrUnknown({
+                          repositoryId,
+                          number: view.entity.number,
+                          policyVersionId: version.versionId,
+                          program: version.program,
+                          evaluator: version.program.evaluator,
+                          snapshot: facts,
+                          resolve,
+                        })).outcome
+                      : evaluate({ program: version.program, snapshot: facts, resolve }).outcome
+                outcomes.set(rule.id, outcome)
               }
               return describe(
                 view,
@@ -194,7 +219,8 @@ export class LabelingTest extends Context.Service<
                 }),
               )
             }),
-          } as const
+          )
+          return { _tag: "Evaluated", entities } as const
         }
       }
     })

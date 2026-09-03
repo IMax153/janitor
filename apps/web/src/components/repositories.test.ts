@@ -79,6 +79,15 @@ const detail: Repositories.RepositoryDetail = {
   ],
 }
 
+const consent: Repositories.AiConsent = {
+  repositoryId: "701",
+  state: "disabled",
+  provider: "openai",
+  model: "gpt-5.6-luna",
+  activeLeases: 0,
+  updatedAt: at,
+}
+
 const opened = (): Repositories.Model => ({
   ...Repositories.init().model,
   selected: Option.some("701"),
@@ -98,7 +107,14 @@ describe("Repositories", () => {
         Repositories.FetchDetail({ repositoryId: "701" }),
         Repositories.Message.GotDetail({ repositoryId: "701", detail }),
       ),
-      Story.model((next) => expect(next.detail).toEqual(Option.some(detail))),
+      Story.Command.resolve(
+        Repositories.FetchConsent({ repositoryId: "701" }),
+        Repositories.Message.GotConsent({ repositoryId: "701", consent }),
+      ),
+      Story.model((next) => {
+        expect(next.detail).toEqual(Option.some(detail))
+        expect(next.maybeConsent).toEqual(Option.some(consent))
+      }),
     )
   })
 
@@ -116,7 +132,14 @@ describe("Repositories", () => {
         Repositories.FetchDetail({ repositoryId: "702" }),
         Repositories.Message.GotDetail({ repositoryId: "701", detail }),
       ),
-      Story.model((next) => expect(next.detail).toEqual(Option.none())),
+      Story.Command.resolve(
+        Repositories.FetchConsent({ repositoryId: "702" }),
+        Repositories.Message.GotConsent({ repositoryId: "701", consent }),
+      ),
+      Story.model((next) => {
+        expect(next.detail).toEqual(Option.none())
+        expect(next.maybeConsent).toEqual(Option.none())
+      }),
     )
   })
 
@@ -163,6 +186,10 @@ describe("Repositories", () => {
       Story.Command.resolve(
         Repositories.FetchDetail({ repositoryId: "701" }),
         Repositories.Message.GotDetail({ repositoryId: "701", detail }),
+      ),
+      Story.Command.resolve(
+        Repositories.FetchConsent({ repositoryId: "701" }),
+        Repositories.Message.GotConsent({ repositoryId: "701", consent }),
       ),
     )
   })

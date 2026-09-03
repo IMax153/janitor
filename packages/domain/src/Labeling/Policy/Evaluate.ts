@@ -277,6 +277,11 @@ export const evaluate = ({ program, snapshot, resolve }: EvaluateInput): Evaluat
       if (applies === "no-match") return "not-applicable"
       if (applies === "unknown") return "unknown"
     }
+    if (current.evaluator._tag === "Classifier") {
+      // A provider evaluates classifiers; without one the answer is unknown.
+      record(matchesLocation, "unknown", "classifier needs a provider")
+      return "unknown"
+    }
     return condition(current.evaluator.matchesWhen, matchesLocation)
   }
 

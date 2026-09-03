@@ -127,6 +127,7 @@ export class LabelingRules extends Context.Service<
       repositoryId: GitHubRepositoryDatabaseId,
       labelId: RuleRecord["labelId"],
       policyId: PolicyId,
+      onNoMatch: RuleRecord["onNoMatch"],
     ) {
       const issues: Array<RuleIssue> = []
       const { labels } = yield* configuration.labels(repositoryId)
@@ -153,6 +154,24 @@ export class LabelingRules extends Context.Service<
           code: "policy-not-published",
           message: `Policy ${policyId} is not published in this repository`,
         })
+      } else if (onNoMatch === "ensure-absent") {
+        // A classifier can only add: its misses are never conclusive.
+        const published = yield* sql`
+          SELECT program->'evaluator'->>'_tag' AS evaluator FROM labeling_policy_version
+          WHERE version_id = ${policy.published_version_id}
+        `.pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ evaluator: Schema.String }))),
+          ),
+          wrap("validate"),
+        )
+        if (published[0]?.evaluator === "Classifier") {
+          issues.push({
+            code: "classifier-preserve-only",
+            message:
+              "A rule bound to a classifier must leave the label alone when it does not match",
+          })
+        }
       }
       if (issues.length > 0) return yield* new RuleInvalid({ issues })
     })
@@ -174,7 +193,7 @@ export class LabelingRules extends Context.Service<
       actor: Actor,
     ) {
       yield* configuration.requireRepository(repositoryId)
-      yield* validate(repositoryId, request.labelId, request.policyId)
+      yield* validate(repositoryId, request.labelId, request.policyId, request.onNoMatch)
       const ruleId = RuleId.make(crypto.randomUUID())
       yield* sql
         .withTransaction(
@@ -219,7 +238,7 @@ export class LabelingRules extends Context.Service<
         priority: request.priority ?? current.priority,
         enabled: request.enabled ?? current.enabled,
       }
-      yield* validate(repositoryId, next.labelId, next.policyId)
+      yield* validate(repositoryId, next.labelId, next.policyId, next.onNoMatch)
       // A label that came back, or a new label, is valid again.
       const labelStatus = next.labelId === current.labelId ? current.labelStatus : "valid"
       yield* sql

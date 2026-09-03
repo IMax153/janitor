@@ -21,6 +21,7 @@ import { freshnessOf } from "../SyncFreshness.ts"
 import { SyncTargets } from "../SyncTargets.ts"
 import type { WorkflowRegistration } from "../WorkflowDispatcher.ts"
 import { recordAudit } from "./Audit.ts"
+import { classifyOrUnknown } from "./Classifier.ts"
 import { LabelingConfiguration } from "./Configuration.ts"
 import { EVALUATION_MAX_AGE, RECONCILE_ENTITY_TAG } from "./SnapshotHandoff.ts"
 import { entityFacts } from "./Test.ts"
@@ -165,7 +166,17 @@ export const ReconcileEntityLayer = ReconcileEntity.toLayer(
           const evaluation: Evaluation =
             version === undefined
               ? { outcome: "unknown", reason: "policy version is missing", trace: [] }
-              : evaluate({ program: version.program, snapshot: facts, resolve })
+              : version.program.evaluator._tag === "Classifier"
+                ? yield* classifyOrUnknown({
+                    repositoryId,
+                    number,
+                    policyVersionId: version.versionId,
+                    program: version.program,
+                    evaluator: version.program.evaluator,
+                    snapshot: facts,
+                    resolve,
+                  })
+                : evaluate({ program: version.program, snapshot: facts, resolve })
           outcomes.set(rule.id, evaluation.outcome)
           evaluations.push({ ruleId: rule.id, policyVersionId: rule.policyVersionId, evaluation })
         }

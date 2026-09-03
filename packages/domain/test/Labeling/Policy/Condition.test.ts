@@ -97,36 +97,39 @@ describe("Condition", () => {
         },
       }
       const program = yield* Schema.decodeUnknownEffect(ProgramFromSource(names))(source)
-      assert.deepStrictEqual(program.evaluator.matchesWhen, {
-        _tag: "All",
-        conditions: [
-          { _tag: "Fact", fact: "draft", operator: "is", value: false },
-          {
-            _tag: "Any",
-            conditions: [
-              { _tag: "Policy", policyId: ready },
-              {
-                _tag: "Fact",
-                fact: "labels",
-                operator: "has",
-                value: GitHubLabelDatabaseId.make("11"),
-              },
-            ],
-          },
-          {
-            _tag: "Collection",
-            fact: "reviews",
-            quantifier: "none",
-            where: {
-              _tag: "Fact",
-              fact: "state",
-              operator: "equals",
-              value: "CHANGES_REQUESTED",
-              caseSensitive: false,
+      assert.deepStrictEqual(
+        program.evaluator._tag === "Conditions" ? program.evaluator.matchesWhen : null,
+        {
+          _tag: "All",
+          conditions: [
+            { _tag: "Fact", fact: "draft", operator: "is", value: false },
+            {
+              _tag: "Any",
+              conditions: [
+                { _tag: "Policy", policyId: ready },
+                {
+                  _tag: "Fact",
+                  fact: "labels",
+                  operator: "has",
+                  value: GitHubLabelDatabaseId.make("11"),
+                },
+              ],
             },
-          },
-        ],
-      })
+            {
+              _tag: "Collection",
+              fact: "reviews",
+              quantifier: "none",
+              where: {
+                _tag: "Fact",
+                fact: "state",
+                operator: "equals",
+                value: "CHANGES_REQUESTED",
+                caseSensitive: false,
+              },
+            },
+          ],
+        },
+      )
       const encoded = yield* Schema.encodeEffect(ProgramFromSource(names))(program)
       assert.deepStrictEqual(encoded, programToSource(program, names))
       assert.deepStrictEqual(

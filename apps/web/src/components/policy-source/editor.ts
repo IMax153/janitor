@@ -46,7 +46,7 @@ export interface EditorContext {
 }
 
 const groupKeys = ["all", "any", "not"] as const
-const rootKeys = ["target", "appliesWhen", "matchesWhen"] as const
+const rootKeys = ["target", "appliesWhen", "matchesWhen", "classify"] as const
 
 const stringValue = (state: EditorState, node: SyntaxNode | null): string | null => {
   if (node === null) return null
@@ -134,6 +134,9 @@ export const policyCompletionSource =
       }
       for (const key of ["some", "every", "none", "where"]) options.push(quoted(key, "collection"))
       options.push(quoted("policy", "reference"))
+      for (const key of ["prompt", "evidence", "minimumConfidence"]) {
+        options.push(quoted(key, "classifier", "property"))
+      }
       return { from, options, validFor: /^"?[\w.]*$/ }
     }
 
@@ -175,6 +178,11 @@ export const policyCompletionSource =
         break
       case "target":
         options.push(quoted("pull_request", "target"), quoted("issue", "target"))
+        break
+      case "evidence":
+        for (const fact of context.catalog) {
+          if (fact.type !== "Collection") options.push(quoted(fact.name, `evidence · ${fact.type}`))
+        }
         break
       case "value": {
         const fieldName = siblingValue(state, object, "fact")

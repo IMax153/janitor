@@ -20,6 +20,8 @@ import * as PolicyEditor from "@/components/policy-editor"
 import * as RuleEditor from "@/components/rule-editor"
 import * as TestBench from "@/components/test-bench"
 import {
+  AiConsent,
+  aiConsentEndpoint,
   CATALOG_ENDPOINT,
   ConfigurationView,
   configurationEndpoint,
@@ -39,6 +41,7 @@ import {
 import { cn } from "@/lib/utils"
 
 export type {
+  AiConsent,
   ConfigurationView,
   PolicyDetail,
   ReconciliationRecord,
@@ -75,6 +78,8 @@ export const Model = Schema.Struct({
   selected: Schema.Option(Schema.String),
   detail: Schema.Option(RepositoryDetail),
   detailError: Schema.Option(Schema.String),
+  maybeConsent: Schema.Option(AiConsent),
+  isChangingConsent: Schema.Boolean,
   panel: Panel,
   /** A row whose delete button was pressed once; the second press deletes. */
   maybeConfirmingDelete: Schema.Option(
@@ -96,6 +101,10 @@ export const Message = defineMessageUnion({
   Polled: {},
   GotDetail: { repositoryId: Schema.String, detail: RepositoryDetail },
   FailedDetail: { repositoryId: Schema.String, reason: Schema.String },
+  GotConsent: { repositoryId: Schema.String, consent: AiConsent },
+  ClickedToggleConsent: {},
+  CompletedSetConsent: { repositoryId: Schema.String, consent: AiConsent },
+  FailedSetConsent: { reason: Schema.String },
   ClickedNewPolicy: {},
   ClickedEditPolicy: { policyId: Schema.String },
   GotPolicyDetail: { detail: PolicyDetail },
@@ -177,6 +186,33 @@ export const FetchDetail = FoldkitCommand.define("FetchDetail", {
     ),
 })
 
+/** Consent is separate from the configuration so a failure here never hides the tables. */
+export const FetchConsent = FoldkitCommand.define("FetchConsent", {
+  args: { repositoryId: Schema.String },
+  messages: [Message.GotConsent],
+  execute: ({ repositoryId }) =>
+    getJson(aiConsentEndpoint(repositoryId), AiConsent).pipe(
+      Effect.map((consent) => Message.GotConsent({ repositoryId, consent })),
+      Effect.catch(() => Effect.never),
+    ),
+})
+
+export const SetConsent = FoldkitCommand.define("SetConsent", {
+  args: { repositoryId: Schema.String, enabled: Schema.Boolean },
+  messages: [Message.CompletedSetConsent, Message.FailedSetConsent],
+  execute: ({ repositoryId, enabled }) =>
+    HttpClientRequest.put(aiConsentEndpoint(repositoryId)).pipe(
+      HttpClientRequest.bodyJson({ enabled }),
+      Effect.flatMap(HttpClient.execute),
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpIncomingMessage.schemaBodyJson(AiConsent)),
+      Effect.map((consent) => Message.CompletedSetConsent({ repositoryId, consent })),
+      Effect.catch((error) =>
+        Effect.succeed(Message.FailedSetConsent({ reason: describe(error) })),
+      ),
+    ),
+})
+
 export const FetchPolicyDetail = FoldkitCommand.define("FetchPolicyDetail", {
   args: { repositoryId: Schema.String, policyId: Schema.String },
   messages: [Message.GotPolicyDetail, Message.FailedPolicyDetail],
@@ -252,6 +288,8 @@ export const init = (): UpdateReturn => ({
       selected: Option.none(),
       detail: Option.none(),
       detailError: Option.none(),
+      maybeConsent: Option.none(),
+      isChangingConsent: false,
       panel: { _tag: "Closed" },
       maybeConfirmingDelete: Option.none(),
     },
@@ -273,7 +311,7 @@ const closed = (model: Model): Model =>
 const refresh = (model: Model) =>
   Option.match(model.selected, {
     onNone: () => [],
-    onSome: (repositoryId) => [FetchDetail({ repositoryId })],
+    onSome: (repositoryId) => [FetchDetail({ repositoryId }), FetchConsent({ repositoryId })],
   })
 
 interface Loaded {
@@ -446,7 +484,10 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       return Option.isNone(model.selected) && first !== undefined
         ? {
             model: evo(next, { selected: () => Option.some(first.repositoryId) }),
-            commands: [FetchDetail({ repositoryId: first.repositoryId })],
+            commands: [
+              FetchDetail({ repositoryId: first.repositoryId }),
+              FetchConsent({ repositoryId: first.repositoryId }),
+            ],
           }
         : { model: next }
     },
@@ -463,8 +504,9 @@ export const update = (model: Model, message: Message): UpdateReturn =>
               selected: () => Option.some(repositoryId),
               detail: () => Option.none<RepositoryDetail>(),
               detailError: () => Option.none<string>(),
+              maybeConsent: () => Option.none<AiConsent>(),
             }),
-            commands: [FetchDetail({ repositoryId })],
+            commands: [FetchDetail({ repositoryId }), FetchConsent({ repositoryId })],
           },
     Polled: () => ({ model, commands: refresh(model) }),
     // A late answer for a repository that is no longer selected is dropped.
@@ -481,6 +523,54 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       Option.contains(model.selected, repositoryId)
         ? { model: evo(model, { detailError: () => Option.some(reason) }) }
         : { model },
+    GotConsent: ({ repositoryId, consent }) =>
+      Option.contains(model.selected, repositoryId)
+        ? { model: evo(model, { maybeConsent: () => Option.some(consent) }) }
+        : { model },
+    ClickedToggleConsent: () =>
+      Option.match(model.selected, {
+        onNone: () => ({ model }),
+        onSome: (repositoryId) =>
+          model.isChangingConsent
+            ? { model }
+            : {
+                model: evo(model, { isChangingConsent: () => true }),
+                commands: [
+                  SetConsent({
+                    repositoryId,
+                    enabled: !Option.exists(
+                      model.maybeConsent,
+                      (consent) => consent.state === "enabled",
+                    ),
+                  }),
+                ],
+              },
+      }),
+    CompletedSetConsent: ({ repositoryId, consent }) => ({
+      model: evo(model, {
+        isChangingConsent: () => false,
+        maybeConsent: (current) =>
+          Option.contains(model.selected, repositoryId) ? Option.some(consent) : current,
+      }),
+      outMessage: OutMessage.Notified({
+        title:
+          consent.state === "enabled"
+            ? "AI classification enabled"
+            : consent.state === "draining"
+              ? "AI classification draining"
+              : "AI classification disabled",
+        description:
+          consent.state === "enabled"
+            ? `Classifier policies may send the evidence they name to ${consent.provider} ${consent.model}.`
+            : consent.state === "draining"
+              ? `${consent.activeLeases} call${consent.activeLeases === 1 ? "" : "s"} still in flight; no new ones start.`
+              : "Classifier policies evaluate as unknown and never remove labels.",
+      }),
+    }),
+    FailedSetConsent: ({ reason }) => ({
+      model: evo(model, { isChangingConsent: () => false }),
+      outMessage: OutMessage.Failed({ title: "AI consent was not changed", reason }),
+    }),
 
     ClickedNewPolicy: () => ({ model: openPolicyEditor(model, Option.none()) }),
     ClickedEditPolicy: ({ policyId }) =>
@@ -967,6 +1057,72 @@ const reconciliationsSection = (
     ],
   )
 
+const consentSection = (h: HtmlBuilder<Message>, model: Model): Html =>
+  h.section(
+    [
+      h.Class("flex flex-col gap-2"),
+      h.DataAttribute(
+        "consent",
+        Option.map(model.maybeConsent, (consent) => consent.state).pipe(
+          Option.getOrElse(() => "unknown"),
+        ),
+      ),
+    ],
+    [
+      h.div(
+        [h.Class("flex items-center justify-between gap-2")],
+        [
+          sectionTitle(h, "AI classification"),
+          Option.match(model.maybeConsent, {
+            onNone: () => h.empty,
+            onSome: (consent) =>
+              Button.view(
+                h,
+                {
+                  variant: consent.state === "enabled" ? "destructive" : "outline",
+                  size: "xs",
+                  onClick: Message.ClickedToggleConsent(),
+                  isDisabled: model.isChangingConsent || consent.state === "draining",
+                  label:
+                    consent.state === "enabled"
+                      ? "Revoke"
+                      : consent.state === "draining"
+                        ? "Draining"
+                        : "Enable",
+                },
+                [h.DataAttribute("action", "toggle-consent")],
+              ),
+          }),
+        ],
+      ),
+      Option.match(model.maybeConsent, {
+        onNone: () => h.div([h.Class("text-muted-foreground text-xs")], ["Loading"]),
+        onSome: (consent) =>
+          h.div(
+            [h.Class("text-muted-foreground flex flex-col gap-1 text-xs")],
+            [
+              h.span(
+                [],
+                [
+                  consent.state === "enabled"
+                    ? `Enabled for ${consent.provider} ${consent.model}. Classifier policies send only the evidence facts they name, with no credentials or repository access, and their answers can only add labels.`
+                    : consent.state === "draining"
+                      ? `Revoked. ${consent.activeLeases} call${consent.activeLeases === 1 ? "" : "s"} already in flight cannot be recalled; no new ones start, and this becomes disabled when they finish.`
+                      : `Disabled. Classifier policies evaluate as unknown, which preserves labels. Enabling sends the evidence facts a classifier names to ${consent.provider === "none" ? "the configured provider" : `${consent.provider} ${consent.model}`}.`,
+                ],
+              ),
+              consent.provider === "none" && consent.state !== "enabled"
+                ? h.span(
+                    [],
+                    ["No provider key is configured on the server, so enabling has no effect yet."],
+                  )
+                : h.empty,
+            ],
+          ),
+      }),
+    ],
+  )
+
 const panelView = (h: HtmlBuilder<Message>, model: Model): Html => {
   switch (model.panel._tag) {
     case "Closed":
@@ -1024,6 +1180,7 @@ const detailPanel = (h: HtmlBuilder<Message>, model: Model): Html =>
                   ),
               policiesSection(h, model, detail.configuration),
               rulesSection(h, model, detail.configuration),
+              consentSection(h, model),
               reconciliationsSection(h, detail.reconciliations, detail.configuration),
             ],
           ),

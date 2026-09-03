@@ -106,7 +106,13 @@ export const draftIssues = (model: Model): ReadonlyArray<string> => [
   ...(model.name.trim().length === 0 ? ["Name is required"] : []),
   ...Option.match(model.source.maybeParseError, {
     onNone: () =>
-      Option.isNone(parsedSource(model)) ? ["The program needs a target and a matchesWhen"] : [],
+      Option.match(parsedSource(model), {
+        onNone: () => ["The program needs a target and either matchesWhen or classify"],
+        onSome: (source) =>
+          source.matchesWhen === undefined && source.classify === undefined
+            ? ["The program needs either matchesWhen or classify"]
+            : [],
+      }),
     onSome: (message) => [message],
   }),
 ]
@@ -500,7 +506,7 @@ export const view = Submodel.defineView<Model, Message>((model, h): Html => {
           h.div(
             [h.Class("text-muted-foreground text-xs")],
             [
-              "Keys: target, appliesWhen, matchesWhen. Conditions: all, any, not, { fact, operator, value }, { some | every | none, where }, { policy }.",
+              "Keys: target, appliesWhen, and matchesWhen or classify. Conditions: all, any, not, { fact, operator, value }, { some | every | none, where }, { policy }. A classifier takes prompt, evidence, and minimumConfidence, and can only add labels.",
             ],
           ),
         ],

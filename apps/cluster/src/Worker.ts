@@ -4,6 +4,7 @@ import * as Command from "alchemy/Command"
 import * as Postgres from "alchemy/SQL/Postgres"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import * as Stream from "effect/Stream"
 import * as Path from "effect/Path"
 import * as Etag from "effect/unstable/http/Etag"
@@ -16,6 +17,8 @@ import { ingressSecrets } from "./Ingress/GitHubWebhook.ts"
 import { makeRoutesLayer } from "./Ingress/Routes.ts"
 import * as Config from "effect/Config"
 import * as PayloadCipher from "./PayloadCipher.ts"
+import * as OpenAiClient from "@effect/ai-openai-compat/OpenAiClient"
+import * as OpenAiLanguageModel from "@effect/ai-openai-compat/OpenAiLanguageModel"
 import * as Cause from "effect/Cause"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable"
@@ -44,6 +47,12 @@ import { ContentPurge } from "./ContentPurge.ts"
 import { RulesetActivation } from "./Labeling/Activation.ts"
 import { LabelingOverview } from "./Labeling/Overview.ts"
 import { ReconcileEntityLayer, ReconcileEntityRegistration } from "./Labeling/ReconcileEntity.ts"
+import {
+  AiClassifier,
+  AiConsentService,
+  ClassifierProvider,
+  providerConfig,
+} from "./Labeling/Classifier.ts"
 import { LabelingConfiguration } from "./Labeling/Configuration.ts"
 import { Policies } from "./Labeling/Policies.ts"
 import { LabelingRules } from "./Labeling/Rules.ts"
@@ -146,6 +155,23 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
     // Every secret is read here, during init, so Alchemy binds it at deploy
     // time. The cluster layer is built lazily and cannot register bindings.
     const secrets = yield* Config.unwrap(ingressSecrets)
+    // The classifier provider is optional: without a key every classifier
+    // policy evaluates unknown, which preserves labels.
+    const ai = yield* Config.unwrap(providerConfig)
+    const ProviderLayer = Option.match(ai.apiKey, {
+      onNone: () => ClassifierProvider.unavailable,
+      onSome: (apiKey) =>
+        ClassifierProvider.fromLanguageModel({ provider: "openai", model: ai.model }).pipe(
+          Layer.provide(OpenAiLanguageModel.layer({ model: ai.model })),
+          Layer.provide(
+            OpenAiClient.layer({
+              apiKey,
+              ...(Option.isSome(ai.apiUrl) ? { apiUrl: ai.apiUrl.value } : {}),
+            }),
+          ),
+          Layer.provide(FetchHttpClient.layer),
+        ),
+    })
     const appCredentials = yield* Config.unwrap(
       GitHubAppAuth.config({ appId: "GITHUB_APP_ID", privateKey: "GITHUB_APP_PRIVATE_KEY" }),
     )
@@ -176,8 +202,9 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
         ),
       ),
       Layer.provideMerge(Policies.layer),
-      Layer.provideMerge(LabelingConfiguration.layer),
-      Layer.provideMerge(SnapshotHandoff.layer),
+      Layer.provideMerge(Layer.mergeAll(LabelingConfiguration.layer, AiClassifier.layer)),
+      Layer.provideMerge(Layer.mergeAll(SnapshotHandoff.layer, AiConsentService.layer)),
+      Layer.provideMerge(ProviderLayer),
       Layer.provideMerge(
         WorkflowDispatcher.layer([
           ProjectGitHubWebhookRegistration,

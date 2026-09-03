@@ -3,8 +3,10 @@ import * as Schema from "effect/Schema"
 import * as SchemaGetter from "effect/SchemaGetter"
 import * as SchemaIssue from "effect/SchemaIssue"
 import { GitHubEntityKind } from "../../GitHub/ReadModel.ts"
+import { FactName } from "./Facts.ts"
 import {
   Condition,
+  conditionFacts,
   conditionFromSource,
   ConditionSource,
   conditionToSource,
@@ -26,7 +28,32 @@ export const PolicyTarget = GitHubEntityKind
 export type PolicyTarget = typeof PolicyTarget.Type
 
 export const ConditionsEvaluator = Schema.TaggedStruct("Conditions", { matchesWhen: Condition })
-export const Evaluator = Schema.Union([ConditionsEvaluator]).annotate({ identifier: "Evaluator" })
+
+export const MAX_EVIDENCE = 8
+export const ClassifierPrompt = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(4_000),
+)
+export const Confidence = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
+
+/**
+ * A classifier asks a language model a yes-or-no question over the named
+ * evidence facts. Its answer below the minimum confidence, or any failure,
+ * is `unknown`, never `no-match`, so a classifier can only ever add.
+ */
+export const ClassifierEvaluator = Schema.TaggedStruct("Classifier", {
+  prompt: ClassifierPrompt,
+  evidence: Schema.NonEmptyArray(FactName).check(
+    Schema.isUnique(),
+    Schema.isMaxLength(MAX_EVIDENCE),
+  ),
+  minimumConfidence: Confidence,
+})
+export type ClassifierEvaluator = typeof ClassifierEvaluator.Type
+
+export const Evaluator = Schema.Union([ConditionsEvaluator, ClassifierEvaluator]).annotate({
+  identifier: "Evaluator",
+})
 export type Evaluator = typeof Evaluator.Type
 
 export const Program = Schema.Struct({
@@ -38,11 +65,23 @@ export type Program = typeof Program.Type
 type ProgramEncoded = typeof Program.Encoded
 
 /** What people write. The evaluator is implied by which key is present. */
-export const ProgramSource = Schema.Struct({
-  target: PolicyTarget,
-  appliesWhen: Schema.optionalKey(ConditionSource),
-  matchesWhen: ConditionSource,
-}).annotate({ identifier: "ProgramSource" })
+export const ClassifySource = Schema.Struct({
+  prompt: ClassifierPrompt,
+  evidence: ClassifierEvaluator.fields.evidence,
+  minimumConfidence: Confidence.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0.8))),
+})
+export const ProgramSource = Schema.Union([
+  Schema.Struct({
+    target: PolicyTarget,
+    appliesWhen: Schema.optionalKey(ConditionSource),
+    matchesWhen: ConditionSource,
+  }),
+  Schema.Struct({
+    target: PolicyTarget,
+    appliesWhen: Schema.optionalKey(ConditionSource),
+    classify: ClassifySource,
+  }),
+]).annotate({ identifier: "ProgramSource" })
 export type ProgramSource = typeof ProgramSource.Type
 
 export const programFromSource = (
@@ -52,18 +91,51 @@ export const programFromSource = (
   const appliesWhen =
     source.appliesWhen === undefined ? null : conditionFromSource(source.appliesWhen, names)
   if (appliesWhen instanceof UnknownPolicyName) return appliesWhen
+  if ("classify" in source) {
+    return {
+      target: source.target,
+      appliesWhen,
+      evaluator: {
+        _tag: "Classifier",
+        prompt: source.classify.prompt,
+        evidence: source.classify.evidence,
+        minimumConfidence: source.classify.minimumConfidence,
+      },
+    }
+  }
   const matchesWhen = conditionFromSource(source.matchesWhen, names)
   if (matchesWhen instanceof UnknownPolicyName) return matchesWhen
   return { target: source.target, appliesWhen, evaluator: { _tag: "Conditions", matchesWhen } }
 }
 
-export const programToSource = (program: Program, names: PolicyNames): ProgramSource => ({
-  target: program.target,
-  ...(program.appliesWhen === null
-    ? {}
-    : { appliesWhen: conditionToSource(program.appliesWhen, names) }),
-  matchesWhen: conditionToSource(program.evaluator.matchesWhen, names),
-})
+export const programToSource = (program: Program, names: PolicyNames): ProgramSource => {
+  const applies =
+    program.appliesWhen === null
+      ? {}
+      : { appliesWhen: conditionToSource(program.appliesWhen, names) }
+  switch (program.evaluator._tag) {
+    case "Conditions":
+      return {
+        target: program.target,
+        ...applies,
+        matchesWhen: conditionToSource(program.evaluator.matchesWhen, names),
+      }
+    case "Classifier":
+      return {
+        target: program.target,
+        ...applies,
+        classify: {
+          prompt: program.evaluator.prompt,
+          evidence: program.evaluator.evidence,
+          minimumConfidence: program.evaluator.minimumConfidence,
+        },
+      }
+  }
+}
+
+/** Facts a program's evaluator reads directly, without following references. */
+export const evaluatorFacts = (evaluator: Evaluator): ReadonlyArray<FactName> =>
+  evaluator._tag === "Classifier" ? evaluator.evidence : conditionFacts(evaluator.matchesWhen)
 
 /** Decodes authored JSON into a program for one repository's policy names, and encodes back. */
 export const ProgramFromSource = (names: PolicyNames) =>

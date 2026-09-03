@@ -15,6 +15,7 @@ import {
 import { RuleId } from "@janitor/domain/Labeling/Policy/Plan"
 import { CurrentAccessIdentity } from "../../src/Ingress/Middleware.ts"
 import { RulesRoutesLayer } from "../../src/Ingress/Rules.ts"
+import { AiConsentService } from "../../src/Labeling/Classifier.ts"
 import { LabelingConfiguration } from "../../src/Labeling/Configuration.ts"
 import { LabelingOverview } from "../../src/Labeling/Overview.ts"
 import {
@@ -128,7 +129,7 @@ const rules: LabelingRules["Service"] = {
 }
 
 const configuration: LabelingConfiguration["Service"] = {
-  requireRepository: unused,
+  requireRepository: () => Effect.void,
   labels: unused,
   load: unused,
   advance: unused,
@@ -137,6 +138,28 @@ const configuration: LabelingConfiguration["Service"] = {
 
 const test: LabelingTest["Service"] = {
   run: () => Effect.succeed({ _tag: "Evaluated", entities: [] }),
+}
+
+const consentService: AiConsentService["Service"] = {
+  get: () =>
+    Effect.succeed({
+      repositoryId,
+      state: "disabled",
+      provider: "openai",
+      model: "gpt-5.6-luna",
+      activeLeases: 0,
+      updatedAt: at,
+    }),
+  set: (_, enabled) =>
+    Effect.succeed({
+      repositoryId,
+      state: enabled ? "enabled" : "disabled",
+      provider: "openai",
+      model: "gpt-5.6-luna",
+      activeLeases: 0,
+      updatedAt: at,
+    }),
+  settleDraining: Effect.succeed(0),
 }
 
 const overview: LabelingOverview["Service"] = {
@@ -158,6 +181,7 @@ const withHandler = <A, E, R>(
             Context.add(LabelingConfiguration, configuration),
             Context.add(LabelingTest, test),
             Context.add(LabelingOverview, overview),
+            Context.add(AiConsentService, consentService),
             Context.add(CurrentAccessIdentity, identity),
           ),
         ),
@@ -248,6 +272,10 @@ describe("RulesRoutes", () => {
           handler(request("POST", `${base}/test`, { subject: { _tag: "Configuration" } })),
         )
         assert.strictEqual(tested.status, 200)
+        const consented = yield* Effect.promise(() =>
+          handler(request("PUT", `${base}/ai-consent`, { enabled: true })),
+        )
+        assert.strictEqual((yield* Effect.promise(() => consented.json())).state, "enabled")
 
         const crossOrigin = yield* Effect.promise(() =>
           handler(

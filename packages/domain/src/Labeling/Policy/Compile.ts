@@ -34,6 +34,7 @@ export const CompileIssueCode = Schema.Literals([
   "missing-reference",
   "reference-cycle",
   "reference-target-mismatch",
+  "classifier-reference",
 ]).annotate({ identifier: "CompileIssueCode" })
 export type CompileIssueCode = typeof CompileIssueCode.Type
 
@@ -186,6 +187,13 @@ export const compile = ({ program, resolve, policyId }: CompileInput): CompileRe
         if (resolved === undefined) {
           return reject("missing-reference", `Policy '${node.policyId}' is not published`, location)
         }
+        if (resolved.program.evaluator._tag === "Classifier") {
+          return reject(
+            "classifier-reference",
+            `Policy '${node.policyId}' is a classifier and cannot be referenced by a condition`,
+            location,
+          )
+        }
         if (resolved.program.target !== target) {
           return reject(
             "reference-target-mismatch",
@@ -219,6 +227,19 @@ export const compile = ({ program, resolve, policyId }: CompileInput): CompileRe
     if (current.appliesWhen !== null) {
       const issue = visit(current.appliesWhen, current.target, local, depth, stack, applies)
       if (issue !== undefined) return issue
+    }
+    if (current.evaluator._tag === "Classifier") {
+      for (const fact of current.evaluator.evidence) {
+        if (!FactCatalog[fact].kinds.includes(current.target)) {
+          return reject(
+            "fact-kind-mismatch",
+            `Fact '${fact}' does not exist for ${current.target}`,
+            matches,
+          )
+        }
+        facts.add(fact)
+      }
+      return count(local, depth, 1, matches)
     }
     return visit(current.evaluator.matchesWhen, current.target, local, depth, stack, matches)
   }

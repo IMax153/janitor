@@ -16,6 +16,7 @@ catalog:
   "@codemirror/view": 6.43.8
   "@lezer/common": 1.5.2
   "@uiw/codemirror-theme-github": 4.25.11
+  "@effect/ai-openai-compat": 4.0.0-rc.112
   "@effect/platform-browser": 4.0.0-rc.112
   "@effect/platform-node": 4.0.0-rc.112
   "@effect/sql-pg": 4.0.0-rc.112

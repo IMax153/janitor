@@ -11,7 +11,6 @@ import {
   type SavePolicyRequest,
   type ValidatePolicyResponse,
 } from "@janitor/domain/Labeling/Policy/Configuration"
-import type { Resolver } from "@janitor/domain/Labeling/Policy/Evaluate"
 import {
   Program,
   programFromSource,
@@ -19,6 +18,7 @@ import {
   programToSource,
   UnknownPolicyName,
 } from "@janitor/domain/Labeling/Policy/Program"
+import { validatePrompt } from "@janitor/domain/Labeling/Policy/Prompt"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
@@ -70,6 +70,9 @@ export class PolicyInUse extends Data.TaggedError("PolicyInUse")<{
   readonly rules: number
   readonly references: number
 }> {}
+
+/** A resolver that also names the version, so callers can cache by it. */
+export type VersionResolver = (policyId: PolicyId) => PolicyVersionRecord | undefined
 
 export type PoliciesFailure =
   | RepositoryNotFound
@@ -145,7 +148,7 @@ export class Policies extends Context.Service<
     ) => Effect.Effect<PolicyNames, PoliciesFailure>
     readonly resolver: (
       repositoryId: GitHubRepositoryDatabaseId,
-    ) => Effect.Effect<Resolver, PoliciesFailure>
+    ) => Effect.Effect<VersionResolver, PoliciesFailure>
   }
 >()("@janitor/cluster/Labeling/Policies/Policies", {
   make: Effect.gen(function* () {
@@ -214,7 +217,7 @@ export class Policies extends Context.Service<
         WHERE p.repository_id = ${repositoryId}
       `.pipe(Effect.flatMap(decodeVersions), wrap("resolver"))
       const byPolicy = new Map(rows.map((row) => [row.policy_id, toVersionRecord(row)]))
-      const resolve: Resolver = (policyId) => byPolicy.get(policyId)
+      const resolve: VersionResolver = (policyId) => byPolicy.get(policyId)
       return resolve
     })
 
@@ -265,9 +268,18 @@ export class Policies extends Context.Service<
       names(repositoryId).pipe(
         Effect.flatMap((policyNames) => {
           const program = programFromSource(source, policyNames)
-          return program instanceof UnknownPolicyName
-            ? Effect.fail(new PolicyInvalid({ message: `Policy '${program.name}' does not exist` }))
-            : Effect.succeed(program)
+          if (program instanceof UnknownPolicyName) {
+            return Effect.fail(
+              new PolicyInvalid({ message: `Policy '${program.name}' does not exist` }),
+            )
+          }
+          if (program.evaluator._tag === "Classifier") {
+            const prompt = validatePrompt(program.evaluator.prompt, program.evaluator.evidence)
+            if (prompt._tag === "Invalid") {
+              return Effect.fail(new PolicyInvalid({ message: prompt.message }))
+            }
+          }
+          return Effect.succeed(program)
         }),
       )
 

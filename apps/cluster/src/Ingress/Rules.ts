@@ -2,6 +2,7 @@ import { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
 import { ReconciliationRecord, RepositoryOverview } from "@janitor/domain/Labeling/Reconciliation"
 import { PolicyId } from "@janitor/domain/Labeling/Policy/Condition"
 import {
+  AiConsent,
   AuditEntry,
   ConfigurationView,
   CreatePolicyRequest,
@@ -12,6 +13,7 @@ import {
   PolicyVersionRecord,
   PublishPolicyRequest,
   RuleIssue,
+  SetAiConsentRequest,
   RuleRecord,
   SavePolicyRequest,
   ValidatePolicyRequest,
@@ -29,6 +31,7 @@ import type * as HttpBody from "effect/unstable/http/HttpBody"
 import type * as HttpServerError from "effect/unstable/http/HttpServerError"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
+import { AiConsentService } from "../Labeling/Classifier.ts"
 import { LabelingConfiguration, type RepositoryNotFound } from "../Labeling/Configuration.ts"
 import { LabelingOverview } from "../Labeling/Overview.ts"
 import {
@@ -242,6 +245,17 @@ const reads = HttpRouter.addAll([
   ),
   HttpRouter.route(
     "GET",
+    "/repositories/:repositoryId/ai-consent",
+    Effect.gen(function* () {
+      const { repositoryId } = yield* repositoryPath
+      const configuration = yield* LabelingConfiguration
+      yield* configuration.requireRepository(repositoryId)
+      const consent = yield* AiConsentService
+      return yield* json(AiConsent)(yield* consent.get(repositoryId))
+    }).pipe(handled("aiConsent")),
+  ),
+  HttpRouter.route(
+    "GET",
     "/repositories/:repositoryId/audit",
     Effect.gen(function* () {
       const { repositoryId } = yield* repositoryPath
@@ -346,6 +360,18 @@ const writes = HttpRouter.addAll([
       yield* rules.remove(repositoryId, ruleId, version, yield* actor)
       return HttpServerResponse.empty({ status: 204 })
     }).pipe(handled("removeRule")),
+  ),
+  HttpRouter.route(
+    "PUT",
+    "/repositories/:repositoryId/ai-consent",
+    Effect.gen(function* () {
+      const { repositoryId } = yield* repositoryPath
+      const request = yield* body(SetAiConsentRequest)
+      const configuration = yield* LabelingConfiguration
+      yield* configuration.requireRepository(repositoryId)
+      const consent = yield* AiConsentService
+      return yield* json(AiConsent)(yield* consent.set(repositoryId, request.enabled, yield* actor))
+    }).pipe(handled("setAiConsent")),
   ),
   HttpRouter.route(
     "POST",

@@ -28,6 +28,7 @@ export const rulesEndpoint = (repositoryId: string) => `${repository(repositoryI
 export const ruleEndpoint = (repositoryId: string, ruleId: string) =>
   `${rulesEndpoint(repositoryId)}/${encodeURIComponent(ruleId)}`
 export const testEndpoint = (repositoryId: string) => `${repository(repositoryId)}/test`
+export const aiConsentEndpoint = (repositoryId: string) => `${repository(repositoryId)}/ai-consent`
 
 // REPOSITORIES
 
@@ -93,7 +94,8 @@ export type PolicyRecord = typeof PolicyRecord.Type
 export const ProgramSource = Schema.Struct({
   target: PolicyTarget,
   appliesWhen: Schema.optionalKey(Schema.Unknown),
-  matchesWhen: Schema.Unknown,
+  matchesWhen: Schema.optionalKey(Schema.Unknown),
+  classify: Schema.optionalKey(Schema.Unknown),
 })
 export type ProgramSource = typeof ProgramSource.Type
 
@@ -174,6 +176,18 @@ export const ConfigurationView = Schema.Struct({
   labelFreshness: SyncFreshness,
 })
 export type ConfigurationView = typeof ConfigurationView.Type
+
+// AI CONSENT
+
+export const AiConsent = Schema.Struct({
+  repositoryId: Schema.String,
+  state: Schema.Literals(["enabled", "draining", "disabled"]),
+  provider: Schema.String,
+  model: Schema.String,
+  activeLeases: Schema.Int,
+  updatedAt: Schema.DateTimeUtc,
+})
+export type AiConsent = typeof AiConsent.Type
 
 // EVALUATION
 
