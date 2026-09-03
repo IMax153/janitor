@@ -13,6 +13,8 @@ import {
 
 export const GITHUB_API_BASE_URL = "https://api.github.com"
 export const GITHUB_API_VERSION = "2022-11-28"
+/** GitHub rejects requests without a User-Agent with 403. Workers do not add one. */
+export const GITHUB_USER_AGENT = "janitor"
 
 /** Which credential a request uses. Cache keys and rate budgets are scoped by it. */
 export const GitHubApiScope = Schema.Union([

@@ -1,6 +1,7 @@
 import {
   GITHUB_API_BASE_URL,
   GITHUB_API_VERSION,
+  GITHUB_USER_AGENT,
   type GitHubApiScope,
   GitHubRateLimitHeaders,
   type GitHubRequestPriority,
@@ -132,6 +133,7 @@ export class GitHubTransport extends Context.Service<
           HttpClientRequest.setHeaders({
             accept: "application/vnd.github+json",
             "x-github-api-version": GITHUB_API_VERSION,
+            "user-agent": GITHUB_USER_AGENT,
             ...(request.etag === undefined ? {} : { "if-none-match": request.etag }),
           }),
         )

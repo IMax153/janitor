@@ -57,6 +57,7 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
   {
     main: import.meta.url,
     compatibility: { flags: ["nodejs_compat"] },
+    domain: "janitor.effectful.co",
   },
   Effect.gen(function* () {
     const hyperdrive = yield* Cloudflare.Hyperdrive.Connect(JanitorHyperdrive)

@@ -136,6 +136,7 @@ describe("GitHubTransport", () => {
       assert.strictEqual(sent?.headers["authorization"], "Bearer ghs_1")
       assert.strictEqual(sent?.headers["if-none-match"], 'W/"old"')
       assert.strictEqual(sent?.headers["x-github-api-version"], "2022-11-28")
+      assert.strictEqual(sent?.headers["user-agent"], "janitor")
       assert.deepStrictEqual(recorder.released, recorder.leases)
       assert.strictEqual(recorder.recorded[0]?.scopeKey, "installation:789")
       assert.strictEqual(recorder.recorded[0]?.headers["x-ratelimit-remaining"], 4999)

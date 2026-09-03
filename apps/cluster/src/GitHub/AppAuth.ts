@@ -1,6 +1,7 @@
 import {
   GITHUB_API_BASE_URL,
   GITHUB_API_VERSION,
+  GITHUB_USER_AGENT,
   GitHubInstallationAccessToken,
 } from "@janitor/domain/GitHub/Api"
 import type { GitHubInstallationId } from "@janitor/domain/GitHub/Id"
@@ -220,6 +221,7 @@ export const make = Effect.fnUntraced(function* (credentials: GitHubAppCredentia
       HttpClientRequest.setHeaders({
         accept: "application/vnd.github+json",
         "x-github-api-version": GITHUB_API_VERSION,
+        "user-agent": GITHUB_USER_AGENT,
       }),
     )
     const response = yield* http.execute(request).pipe(

@@ -156,6 +156,7 @@ describe("GitHubAppAuth", () => {
           url: string
           authorization: string | undefined
           version: string | undefined
+          userAgent: string | undefined
         }> = []
         let issued = 0
         const client = HttpClient.make((request) =>
@@ -164,6 +165,7 @@ describe("GitHubAppAuth", () => {
               url: request.url,
               authorization: request.headers["authorization"],
               version: request.headers["x-github-api-version"],
+              userAgent: request.headers["user-agent"],
             })
             issued++
             const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString()
@@ -200,6 +202,7 @@ describe("GitHubAppAuth", () => {
         )
         assert.isTrue(requests[0]?.authorization?.startsWith("Bearer ey"))
         assert.strictEqual(requests[0]?.version, "2022-11-28")
+        assert.strictEqual(requests[0]?.userAgent, "janitor")
       }),
   )
 })
