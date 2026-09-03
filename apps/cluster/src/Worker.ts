@@ -169,16 +169,22 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
     // Route errors that know their response (400 for a malformed request,
     // 404 for no route) become that response; anything else is a 500.
     const webhooks = webhookRoutes.pipe(
-      Effect.catchCause((cause) =>
-        Effect.logError("Webhook ingress failed", cause).pipe(
+      Effect.catchCause((cause) => {
+        const error = Cause.squash(cause)
+        const expected = HttpServerRespondable.isRespondable(error)
+        return (
+          expected
+            ? Effect.logWarning("Webhook request rejected", cause)
+            : Effect.logError("Webhook ingress failed", cause)
+        ).pipe(
           Effect.andThen(
             HttpServerRespondable.toResponseOrElseDefect(
-              Cause.squash(cause),
+              error,
               HttpServerResponse.empty({ status: 500 }),
             ),
           ),
-        ),
-      ),
+        )
+      }),
     )
 
     const handler = Effect.gen(function* () {

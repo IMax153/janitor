@@ -192,6 +192,16 @@ export const projectDelivery = Effect.fn("ProjectGitHubWebhook.projectDelivery")
   if (row.projectionStatus !== "pending") {
     return row.projectionStatus
   }
+  const record = (status: "projected" | "unsupported" | "failed", detail?: string) =>
+    Effect.logInfo("Projected GitHub webhook delivery").pipe(
+      Effect.annotateLogs({
+        id: deliveryId,
+        event: row.eventName,
+        sequence: row.sequence,
+        status,
+        ...(detail === undefined ? {} : { detail }),
+      }),
+    )
 
   const plaintext = yield* cipher
     .decrypt(deliveryId, row.encryption, row.payload)
@@ -200,6 +210,7 @@ export const projectDelivery = Effect.fn("ProjectGitHubWebhook.projectDelivery")
     yield* journal
       .markProjection(deliveryId, "failed", Option.some("Payload decryption failed"))
       .pipe(Effect.mapError((error) => fail(error.message)))
+    yield* record("failed", "Payload decryption failed")
     return "failed" as const
   }
 
@@ -211,6 +222,7 @@ export const projectDelivery = Effect.fn("ProjectGitHubWebhook.projectDelivery")
     yield* journal
       .markProjection(deliveryId, "unsupported", Option.some(decoded.failure.message))
       .pipe(Effect.mapError((error) => fail(error.message)))
+    yield* record("unsupported", decoded.failure.message)
     return "unsupported" as const
   }
 
@@ -229,6 +241,7 @@ export const projectDelivery = Effect.fn("ProjectGitHubWebhook.projectDelivery")
       }),
     )
     .pipe(Effect.mapError((error) => fail(error.message)))
+  yield* record("projected")
   return "projected" as const
 })
 
