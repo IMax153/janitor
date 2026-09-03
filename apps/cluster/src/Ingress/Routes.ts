@@ -4,6 +4,7 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import * as AccessJwt from "./AccessJwt.ts"
 import { type IngressSecrets, makeGitHubWebHookRoutesLayer } from "./GitHubWebhook.ts"
 import { AccessMiddlewareLayer, RateLimitMiddlewareLayer } from "./Middleware.ts"
+import { RulesRoutesLayer } from "./Rules.ts"
 import { SyncRoutesLayer } from "./Sync.ts"
 
 const ApiRouterLayer = Layer.effect(
@@ -18,7 +19,7 @@ const ApiRouterLayer = Layer.effect(
 export const makeRoutesLayer = (secrets: IngressSecrets, access: AccessJwt.AccessVerifierConfig) =>
   Layer.mergeAll(
     makeGitHubWebHookRoutesLayer(secrets),
-    SyncRoutesLayer.pipe(
+    Layer.mergeAll(SyncRoutesLayer, RulesRoutesLayer).pipe(
       Layer.provide(AccessMiddlewareLayer),
       Layer.provide(AccessJwt.layerFrom(access)),
     ),
