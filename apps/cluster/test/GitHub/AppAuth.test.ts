@@ -121,6 +121,18 @@ describe("GitHubAppAuth", () => {
     }),
   )
 
+  it.effect("accepts a PEM flattened to one line with literal newline escapes", () =>
+    Effect.gen(function* () {
+      const pair = yield* generateKeyPair
+      const der = new Uint8Array(
+        yield* Effect.promise(() => crypto.subtle.exportKey("pkcs8", pair.privateKey)),
+      )
+      const flattened = pem("PRIVATE KEY", der).replace(/\n/g, "\\n")
+
+      assert.deepStrictEqual(yield* AppAuth.privateKeyDer(flattened), der)
+    }),
+  )
+
   it.effect("rejects keys that are not PEM or not RSA", () =>
     Effect.gen(function* () {
       const notPem = yield* AppAuth.privateKeyDer("nope").pipe(Effect.exit)

@@ -103,7 +103,9 @@ const PEM_PATTERN = /-----BEGIN ([A-Z ]+)-----([\s\S]+?)-----END \1-----/
 /** Returns PKCS#8 DER bytes for either PEM form GitHub Apps use. */
 export const privateKeyDer = (pem: string): Effect.Effect<Uint8Array, GitHubAppAuthError> =>
   Effect.gen(function* () {
-    const match = PEM_PATTERN.exec(pem)
+    // Accept a key pasted as one line with literal "\n" sequences, as env
+    // files and secret managers often store it.
+    const match = PEM_PATTERN.exec(pem.replace(/\\n/g, "\n"))
     if (match === null) {
       return yield* new GitHubAppAuthError({
         operation: "importKey",
