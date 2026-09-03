@@ -89,3 +89,20 @@ export const SyncTargetRecord = Schema.Struct({
   lastError: Schema.NullOr(Schema.String),
 }).annotate({ identifier: "SyncTargetRecord" })
 export type SyncTargetRecord = typeof SyncTargetRecord.Type
+
+/** Whole-system view of synchronization, as shown to people. */
+export const SyncState = Schema.Literals(["idle", "syncing", "blocked"]).annotate({
+  identifier: "SyncState",
+})
+export type SyncState = typeof SyncState.Type
+
+export const SyncSummary = Schema.Struct({
+  state: SyncState,
+  /** Newest verification across every scope, or null before the first one. */
+  lastVerifiedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** Scopes with a run requested and not yet completed. */
+  pendingTargets: Schema.Int,
+  /** Scopes GitHub will not let Janitor read. */
+  blockedTargets: Schema.Int,
+}).annotate({ identifier: "SyncSummary" })
+export type SyncSummary = typeof SyncSummary.Type

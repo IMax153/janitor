@@ -42,6 +42,7 @@ import {
 import { ContentPurge } from "./ContentPurge.ts"
 import { SyncPlanner } from "./SyncPlanner.ts"
 import { SyncRepairCronLayer, SyncRepairCronName } from "./SyncRepairCron.ts"
+import { SyncStatus } from "./SyncStatus.ts"
 import { SyncTargets } from "./SyncTargets.ts"
 import { GitHubWebhookJournal } from "./GitHub/WebhookJournal.ts"
 import {
@@ -96,7 +97,7 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       WorkflowOutboxCronLayer,
       SyncRepairCronLayer,
     ).pipe(
-      Layer.provideMerge(SyncPlanner.layer),
+      Layer.provideMerge(Layer.mergeAll(SyncPlanner.layer, SyncStatus.layer)),
       Layer.provideMerge(
         WorkflowDispatcher.layer([
           ProjectGitHubWebhookRegistration,
@@ -152,8 +153,9 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
         ),
     )
 
-    // Signed webhook ingress lives in the same deployment as the consumer and
-    // workflows, so there is no internal hop between acceptance and journaling.
+    // Signed webhook ingress and the human sync routes live in the same
+    // deployment as the consumer and workflows, so there is no internal hop
+    // between acceptance and journaling.
     const HttpPlatformStubLayer = Layer.succeed(HttpPlatform.HttpPlatform, {
       platform: "web",
       compression: {
@@ -164,19 +166,19 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       fileResponse: () => Effect.die("HttpPlatform.fileResponse not supported"),
       fileWebResponse: () => Effect.die("HttpPlatform.fileWebResponse not supported"),
     })
-    const webhookRoutes = yield* HttpRouter.toHttpEffect(
+    const apiRoutes = yield* HttpRouter.toHttpEffect(
       makeRoutesLayer(secrets).pipe(Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer])),
     )
     // Route errors that know their response (400 for a malformed request,
     // 404 for no route) become that response; anything else is a 500.
-    const webhooks = webhookRoutes.pipe(
+    const api = apiRoutes.pipe(
       Effect.catchCause((cause) => {
         const error = Cause.squash(cause)
         const expected = HttpServerRespondable.isRespondable(error)
         return (
           expected
-            ? Effect.logWarning("Webhook request rejected", cause)
-            : Effect.logError("Webhook ingress failed", cause)
+            ? Effect.logWarning("API request rejected", cause)
+            : Effect.logError("API request failed", cause)
         ).pipe(
           Effect.andThen(
             HttpServerRespondable.toResponseOrElseDefect(
@@ -192,7 +194,7 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       const request = yield* HttpServerRequest.HttpServerRequest
       const url = new URL(request.originalUrl)
       return url.pathname.startsWith("/api/v1/")
-        ? yield* webhooks
+        ? yield* api
         : HttpServerResponse.empty({ status: 404 })
     })
 
