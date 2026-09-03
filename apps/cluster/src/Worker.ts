@@ -54,9 +54,48 @@ import { WorkflowDispatcher } from "./WorkflowDispatcher.ts"
 import { WorkflowOutbox } from "./WorkflowOutbox.ts"
 import { WorkflowOutboxCronLayer, WorkflowOutboxCronName } from "./WorkflowOutboxCron.ts"
 
+/** The Zero Trust organization whose GitHub identity provider admits people. */
+const ACCESS_TEAM_DOMAIN = "effectful.cloudflareaccess.com"
+const ACCESS_GITHUB_IDENTITY_PROVIDER_ID = "0d007daa-be1b-4e31-b538-98a8048f6863"
+const ACCESS_GITHUB_ORGANIZATION = "Effectful-Tech"
+const DOMAIN = "janitor.effectful.co"
+
 export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
   "ClusterWorker",
   Effect.gen(function* () {
+    // Spike policy: any member of the organization. The split into a
+    // configuration team and a stricter operator team comes later.
+    const access = yield* Cloudflare.Access.Application("Access", {
+      type: "self_hosted",
+      name: "Janitor",
+      sessionDuration: "8h",
+      allowedIdps: [ACCESS_GITHUB_IDENTITY_PROVIDER_ID],
+      autoRedirectToIdentity: true,
+      policies: [
+        {
+          name: `${ACCESS_GITHUB_ORGANIZATION} members`,
+          decision: "allow",
+          include: [
+            {
+              githubOrganization: {
+                identityProviderId: ACCESS_GITHUB_IDENTITY_PROVIDER_ID,
+                name: ACCESS_GITHUB_ORGANIZATION,
+              },
+            },
+          ],
+        },
+      ],
+    })
+    // GitHub cannot log in. A hostname-level application beats the Worker
+    // level one, so this path skips Access and keeps its signature check.
+    yield* Cloudflare.Access.Application("WebhookBypass", {
+      type: "self_hosted",
+      name: "Janitor GitHub webhooks",
+      domain: `${DOMAIN}/api/v1/webhooks/github`,
+      appLauncherVisible: false,
+      policies: [{ name: "GitHub deliveries", decision: "bypass", include: ["everyone"] }],
+    })
+
     // The web app is served from this Worker so the browser and the API share
     // one origin: no CORS, and the Access cookie covers both once it exists.
     const web = yield* Command.Build("WebBuild", {
@@ -67,7 +106,13 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
     return {
       main: import.meta.url,
       compatibility: { flags: ["nodejs_compat"] },
-      domain: "janitor.effectful.co",
+      domain: DOMAIN,
+      // The custom domain is the only entry; Access covers it.
+      workersDev: false,
+      access,
+      // Read at init from the environment: the plan-phase Config interceptor
+      // only binds values it can resolve from the deploy environment.
+      env: { ACCESS_AUD: access.aud },
       assets: {
         directory: web.outdir,
         // Foldkit routes on the client; unmatched paths boot the app.
@@ -181,8 +226,15 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       fileResponse: () => Effect.die("HttpPlatform.fileResponse not supported"),
       fileWebResponse: () => Effect.die("HttpPlatform.fileWebResponse not supported"),
     })
+    const env = yield* Cloudflare.Workers.WorkerEnvironment
+    // The audience binding is empty during plan, when no request can arrive.
+    // At runtime an empty audience matches no assertion, so a missing binding
+    // fails closed rather than open.
+    const accessAudience = typeof env.ACCESS_AUD === "string" ? env.ACCESS_AUD : ""
     const apiRoutes = yield* HttpRouter.toHttpEffect(
-      makeRoutesLayer(secrets).pipe(Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer])),
+      makeRoutesLayer(secrets, { teamDomain: ACCESS_TEAM_DOMAIN, audience: accessAudience }).pipe(
+        Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer, FetchHttpClient.layer]),
+      ),
     )
     // Route errors that know their response (400 for a malformed request,
     // 404 for no route) become that response; anything else is a 500.
@@ -208,7 +260,6 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
     // Requests that match a built file never reach the Worker. Everything
     // else that is not the API goes back to the asset layer, which applies
     // the single-page fallback.
-    const env = yield* Cloudflare.Workers.WorkerEnvironment
     const assets = Cloudflare.fromCloudflareFetcher(env.ASSETS)
     const handler = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest

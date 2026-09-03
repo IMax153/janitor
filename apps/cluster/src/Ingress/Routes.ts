@@ -1,8 +1,9 @@
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
+import * as AccessJwt from "./AccessJwt.ts"
 import { type IngressSecrets, makeGitHubWebHookRoutesLayer } from "./GitHubWebhook.ts"
-import { RateLimitMiddlewareLayer } from "./Middleware.ts"
+import { AccessMiddlewareLayer, RateLimitMiddlewareLayer } from "./Middleware.ts"
 import { SyncRoutesLayer } from "./Sync.ts"
 
 const ApiRouterLayer = Layer.effect(
@@ -10,8 +11,15 @@ const ApiRouterLayer = Layer.effect(
   Effect.map(HttpRouter.HttpRouter, (router) => router.prefixed("/api/v1")),
 )
 
-export const makeRoutesLayer = (secrets: IngressSecrets) =>
-  Layer.mergeAll(makeGitHubWebHookRoutesLayer(secrets), SyncRoutesLayer).pipe(
-    Layer.provide(RateLimitMiddlewareLayer),
-    Layer.provide(ApiRouterLayer),
-  )
+/**
+ * The webhook route stays outside Access and relies on the GitHub signature.
+ * Every human route sits behind the Access assertion check.
+ */
+export const makeRoutesLayer = (secrets: IngressSecrets, access: AccessJwt.AccessVerifierConfig) =>
+  Layer.mergeAll(
+    makeGitHubWebHookRoutesLayer(secrets),
+    SyncRoutesLayer.pipe(
+      Layer.provide(AccessMiddlewareLayer),
+      Layer.provide(AccessJwt.layerFrom(access)),
+    ),
+  ).pipe(Layer.provide(RateLimitMiddlewareLayer), Layer.provide(ApiRouterLayer))

@@ -1,12 +1,23 @@
 import { assert, describe, it } from "@effect/vitest"
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as RuntimeContext from "alchemy/RuntimeContext"
+import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
-import { RateLimitMiddlewareLayer } from "../../src/Ingress/Middleware.ts"
+import {
+  type AccessIdentity,
+  AccessAssertionRejected,
+  AccessKeysUnavailable,
+  AccessVerifier,
+} from "../../src/Ingress/AccessJwt.ts"
+import {
+  AccessMiddlewareLayer,
+  CurrentAccessIdentity,
+  RateLimitMiddlewareLayer,
+} from "../../src/Ingress/Middleware.ts"
 
 const runtimeContext = RuntimeContext.RuntimeContext.of({
   Type: "Test",
@@ -177,4 +188,106 @@ describe("RateLimitMiddlewareLayer", () => {
         }),
     ),
   )
+})
+
+describe("AccessMiddleware", () => {
+  const identity: AccessIdentity = {
+    issuer: "https://team.cloudflareaccess.test",
+    subject: "user-123",
+    email: undefined,
+    expiresAt: DateTime.makeUnsafe("2026-09-03T12:00:00.000Z"),
+  }
+
+  const makeAccessLayer = (verify: AccessVerifier["Service"]["verify"]) =>
+    HttpRouter.add(
+      "GET",
+      "/whoami",
+      Effect.map(CurrentAccessIdentity, (identity) =>
+        HttpServerResponse.text(`${identity.issuer} ${identity.subject}`),
+      ),
+    ).pipe(
+      Layer.provide(AccessMiddlewareLayer),
+      Layer.provide(Layer.succeed(AccessVerifier, { verify })),
+    )
+
+  const withAccessHandler = <A, E, R>(
+    verify: AccessVerifier["Service"]["verify"],
+    use: (handler: (request: Request) => Promise<Response>) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(makeAccessLayer(verify), { disableLogger: true })),
+      ({ handler }) => use(handler),
+      ({ dispose }) => Effect.promise(dispose),
+    )
+
+  it.effect("answers 401 with an empty body when the assertion is missing", () =>
+    withAccessHandler(
+      () => Effect.die("must not verify"),
+      (handler) =>
+        Effect.gen(function* () {
+          const response = yield* Effect.promise(() =>
+            handler(new Request("https://example.com/whoami")),
+          )
+          assert.strictEqual(response.status, 401)
+          assert.strictEqual(yield* Effect.promise(() => response.text()), "")
+        }),
+    ),
+  )
+
+  it.effect("answers 401 when the verifier rejects or cannot fetch keys", () =>
+    Effect.gen(function* () {
+      const rejected = yield* withAccessHandler(
+        () => Effect.fail(new AccessAssertionRejected({ reason: "expired" })),
+        (handler) =>
+          Effect.promise(() =>
+            handler(
+              new Request("https://example.com/whoami", {
+                headers: { "cf-access-jwt-assertion": "a.b.c" },
+              }),
+            ),
+          ),
+      )
+      assert.strictEqual(rejected.status, 401)
+
+      const unavailable = yield* withAccessHandler(
+        () => Effect.fail(new AccessKeysUnavailable({ cause: "down" })),
+        (handler) =>
+          Effect.promise(() =>
+            handler(
+              new Request("https://example.com/whoami", {
+                headers: { "cf-access-jwt-assertion": "a.b.c" },
+              }),
+            ),
+          ),
+      )
+      assert.strictEqual(unavailable.status, 401)
+    }),
+  )
+
+  it.effect("passes the exact header to the verifier and gives the route the identity", () => {
+    const seen: Array<string> = []
+    return withAccessHandler(
+      (assertion) =>
+        Effect.sync(() => {
+          seen.push(assertion)
+          return identity
+        }),
+      (handler) =>
+        Effect.gen(function* () {
+          const response = yield* Effect.promise(() =>
+            handler(
+              new Request("https://example.com/whoami", {
+                headers: { "cf-access-jwt-assertion": "h.p.s" },
+              }),
+            ),
+          )
+          assert.strictEqual(response.status, 200)
+          assert.strictEqual(
+            yield* Effect.promise(() => response.text()),
+            "https://team.cloudflareaccess.test user-123",
+          )
+          assert.deepStrictEqual(seen, ["h.p.s"])
+        }),
+    )
+  })
 })
