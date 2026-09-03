@@ -22,6 +22,7 @@ const view: RulesetView = {
   configuredRevision: RulesetRevision.make(1),
   configured: { rules: [] },
   activeRevision: null,
+  pendingTracks: [],
   labels: [],
   labelFreshness: "projected",
 }

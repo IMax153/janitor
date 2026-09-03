@@ -12,13 +12,16 @@ import {
 import { GitHubWebhookJournalSequence } from "@janitor/domain/GitHub/WebhookJournal"
 import { type Rule, RuleId, RulesetRevision } from "@janitor/domain/Labeling/Ruleset"
 import { GitHubReadModel } from "../../src/GitHub/ReadModel.ts"
+import { RulesetActivation } from "../../src/Labeling/Activation.ts"
 import { LabelingRulesets } from "../../src/Labeling/Rulesets.ts"
 import { SyncTargets } from "../../src/SyncTargets.ts"
 import { WorkflowOutbox } from "../../src/WorkflowOutbox.ts"
 import { MigratedPostgresLayer } from "../support/Postgres.ts"
 
 const RulesetsLayer = LabelingRulesets.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(SyncTargets.layer, GitHubReadModel.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(SyncTargets.layer, GitHubReadModel.layer, RulesetActivation.layer),
+  ),
   Layer.provideMerge(WorkflowOutbox.layer),
   Layer.provideMerge(MigratedPostgresLayer),
 )
@@ -97,6 +100,9 @@ layer(RulesetsLayer, { timeout: "2 minutes" })("LabelingRulesets against Postgre
       })
       assert.strictEqual(first.configuredRevision, 1)
       assert.deepStrictEqual(first.configured.rules, [baseMain])
+      // The save asked for every track the rule needs; none has verified yet.
+      assert.isNull(first.activeRevision)
+      assert.deepStrictEqual(first.pendingTracks, ["labels", "entities", "pull_requests"])
 
       // Editing revision 0 again is a conflict that reports the current state.
       const conflict = yield* Effect.flip(
@@ -140,7 +146,53 @@ layer(RulesetsLayer, { timeout: "2 minutes" })("LabelingRulesets against Postgre
       })
       assert.strictEqual(second.configuredRevision, 2)
       assert.strictEqual(second.configured.rules[0]?.enabled, false)
-      assert.isNull(second.activeRevision)
+      // A revision with no enabled rules needs nothing and is active at once.
+      assert.strictEqual(second.activeRevision, 2)
+      assert.deepStrictEqual(second.pendingTracks, [])
+    }),
+  )
+
+  it.effect("promotes a revision once every track it recorded has verified", () =>
+    Effect.gen(function* () {
+      const rulesets = yield* LabelingRulesets
+      const targets = yield* SyncTargets
+      const activation = yield* RulesetActivation
+      const saved = yield* rulesets.save({
+        repositoryId,
+        expectedRevision: revision(2),
+        ruleset: { rules: [baseMain] },
+        author,
+      })
+      assert.strictEqual(saved.configuredRevision, 3)
+      assert.strictEqual(saved.activeRevision, 2)
+      assert.deepStrictEqual(saved.pendingTracks, ["labels", "entities", "pull_requests"])
+
+      const verify = (track: "labels" | "entities" | "pull_requests") =>
+        Effect.gen(function* () {
+          const scope = { _tag: "RepositoryTrack", repositoryId, track } as const
+          const record = Option.getOrThrow(yield* targets.get(scope))
+          yield* targets.begin(scope, record.requestedGeneration)
+          yield* targets.complete({
+            scope,
+            generation: record.requestedGeneration,
+            outcome: { _tag: "Verified", watermark: Option.none() },
+          })
+        })
+
+      yield* verify("labels")
+      yield* verify("entities")
+      assert.isTrue(Option.isNone(yield* activation.promote(repositoryId)))
+      const waiting = yield* rulesets.load(repositoryId)
+      assert.strictEqual(waiting.activeRevision, 2)
+      assert.deepStrictEqual(waiting.pendingTracks, ["pull_requests"])
+
+      yield* verify("pull_requests")
+      assert.deepStrictEqual(yield* activation.promote(repositoryId), Option.some(revision(3)))
+      const active = yield* rulesets.load(repositoryId)
+      assert.strictEqual(active.activeRevision, 3)
+      assert.deepStrictEqual(active.pendingTracks, [])
+      // Nothing left to promote.
+      assert.strictEqual(yield* activation.promoteAll, 0)
     }),
   )
 

@@ -41,6 +41,7 @@ import {
   SyncRepositoryTrackRegistration,
 } from "./GitHub/SyncRepositoryTrack.ts"
 import { ContentPurge } from "./ContentPurge.ts"
+import { RulesetActivation } from "./Labeling/Activation.ts"
 import { LabelingRulesets } from "./Labeling/Rulesets.ts"
 import { SyncPlanner } from "./SyncPlanner.ts"
 import { SyncRepairCronLayer, SyncRepairCronName } from "./SyncRepairCron.ts"
@@ -180,6 +181,7 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
           GitHubPayloadReader.fromBucket(githubPayloadsBucket),
           GitHubEventsDeadLetter.fromQueue(githubDeadLetterQueue),
           GitHubPayloadCipherLayer,
+          RulesetActivation.layer,
         ),
       ),
       Layer.provideMerge(WorkflowOutbox.layer),

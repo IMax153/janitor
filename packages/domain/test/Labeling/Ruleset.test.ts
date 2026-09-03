@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import { GitHubLabelDatabaseId } from "@janitor/domain/GitHub/Id"
 import {
+  requiredTracks,
   Rule,
   RuleId,
   Ruleset,
@@ -108,6 +109,27 @@ describe("Ruleset", () => {
         labels,
       ),
       [],
+    )
+  })
+
+  it("derives the tracks a ruleset needs from its enabled rules", () => {
+    assert.deepStrictEqual(requiredTracks({ rules: [] }), [])
+    assert.deepStrictEqual(requiredTracks({ rules: [rule({ enabled: false })] }), [])
+    assert.deepStrictEqual(requiredTracks({ rules: [rule()] }), [
+      "labels",
+      "entities",
+      "pull_requests",
+    ])
+    assert.deepStrictEqual(
+      requiredTracks({
+        rules: [
+          rule({
+            target: "issue",
+            evaluator: { _tag: "Concrete", predicates: [{ _tag: "AuthorIs", login: "octocat" }] },
+          }),
+        ],
+      }),
+      ["labels", "entities"],
     )
   })
 })

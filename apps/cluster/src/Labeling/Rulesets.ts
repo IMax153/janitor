@@ -1,9 +1,12 @@
 import type { GitHubRepositoryDatabaseId } from "@janitor/domain/GitHub/Id"
+import type { GitHubRepositoryTrack } from "@janitor/domain/GitHub/Sync"
 import {
   emptyRuleset,
+  requiredTracks,
   Ruleset,
   type RulesetAuthor,
   type RulesetIssue,
+  RulesetPreparation,
   RulesetRevision,
   type RulesetView,
   type SynchronizedLabel,
@@ -22,6 +25,7 @@ import { GitHubReadModel } from "../GitHub/ReadModel.ts"
 import { describeError } from "../SqlErrors.ts"
 import { freshnessOf } from "../SyncFreshness.ts"
 import { SyncTargets } from "../SyncTargets.ts"
+import { RulesetActivation } from "./Activation.ts"
 
 /** Configuration display tolerates older label verification than evaluation will. */
 export const RULESET_LABEL_MAX_AGE = Duration.hours(24)
@@ -57,7 +61,10 @@ const CurrentRow = Schema.Struct({
   configured_revision: RevisionFromText,
   active_revision: Schema.NullOr(RevisionFromText),
   ruleset: Ruleset,
+  required_tracks: RulesetPreparation,
 })
+
+const PendingTrackRow = Schema.Struct({ track: Schema.String })
 
 const LockRow = Schema.Struct({ configured_revision: RevisionFromText })
 
@@ -86,9 +93,12 @@ export class LabelingRulesets extends Context.Service<
     const sql = yield* SqlClient.SqlClient
     const readModel = yield* GitHubReadModel
     const targets = yield* SyncTargets
+    const activation = yield* RulesetActivation
     const decodeCurrent = Schema.decodeUnknownEffect(Schema.Array(CurrentRow))
     const decodeLock = Schema.decodeUnknownEffect(Schema.Array(LockRow))
     const encodeRuleset = Schema.encodeEffect(Schema.fromJsonString(Ruleset))
+    const encodePreparation = Schema.encodeEffect(Schema.fromJsonString(RulesetPreparation))
+    const decodePendingTracks = Schema.decodeUnknownEffect(Schema.Array(PendingTrackRow))
 
     const wrap =
       (operation: string) =>
@@ -127,7 +137,7 @@ export class LabelingRulesets extends Context.Service<
 
     const current = (repositoryId: GitHubRepositoryDatabaseId) =>
       sql`
-        SELECT r.configured_revision::text, r.active_revision::text, v.ruleset
+        SELECT r.configured_revision::text, r.active_revision::text, v.ruleset, v.required_tracks
         FROM labeling_repository_rules r
         JOIN labeling_ruleset_revision v
           ON v.repository_id = r.repository_id AND v.revision = r.configured_revision
@@ -138,17 +148,44 @@ export class LabelingRulesets extends Context.Service<
         wrap("current"),
       )
 
+    /** Tracks whose verified generation is still below what the revision recorded. */
+    const pendingTracks = (
+      repositoryId: GitHubRepositoryDatabaseId,
+      preparation: RulesetPreparation,
+    ) => {
+      const needed = Object.entries(preparation)
+      if (needed.length === 0) return Effect.succeed<ReadonlyArray<GitHubRepositoryTrack>>([])
+      return Effect.forEach(needed, ([track, generation]) =>
+        sql`
+          SELECT ${track} AS track FROM (SELECT 1) AS one
+          WHERE NOT EXISTS (
+            SELECT 1 FROM sync_target
+            WHERE scope_key = ${`repository:${repositoryId}:${track}`}
+              AND health = 'ok' AND verified_generation >= ${generation}::bigint
+          )
+        `.pipe(Effect.flatMap(decodePendingTracks)),
+      ).pipe(
+        Effect.map((rows) => rows.flat().map((row) => row.track as GitHubRepositoryTrack)),
+        wrap("pendingTracks"),
+      )
+    }
+
     const view = (repositoryId: GitHubRepositoryDatabaseId) =>
       Effect.gen(function* () {
         const [rules, { labels, freshness }] = yield* Effect.all(
           [current(repositoryId), synchronizedLabels(repositoryId)],
           { concurrency: 2 },
         )
+        const pending =
+          Option.isSome(rules) && rules.value.active_revision !== rules.value.configured_revision
+            ? yield* pendingTracks(repositoryId, rules.value.required_tracks)
+            : []
         const result: RulesetView = {
           repositoryId,
           configuredRevision: Option.isSome(rules) ? rules.value.configured_revision : ZERO,
           configured: Option.isSome(rules) ? rules.value.ruleset : emptyRuleset,
           activeRevision: Option.isSome(rules) ? rules.value.active_revision : null,
+          pendingTracks: pending,
           labels,
           labelFreshness: freshness,
         }
@@ -184,10 +221,21 @@ export class LabelingRulesets extends Context.Service<
               return yield* new RulesetInvalid({ issues })
             }
             const next = RulesetRevision.make(configured + 1)
+            // The preparation request: one new generation per track the
+            // rules need, recorded so promotion can wait for exactly those.
+            const preparation: Record<string, string> = {}
+            for (const track of requiredTracks(request.ruleset)) {
+              const { generation } = yield* targets.invalidate({
+                scope: { _tag: "RepositoryTrack", repositoryId, track },
+                sequence: Option.none(),
+              })
+              preparation[track] = generation
+            }
+            const encodedPreparation = yield* encodePreparation(preparation as RulesetPreparation)
             yield* sql`
               INSERT INTO labeling_ruleset_revision
-                (repository_id, revision, ruleset, saved_by_issuer, saved_by_subject)
-              VALUES (${repositoryId}, ${next}, ${encoded}::jsonb,
+                (repository_id, revision, ruleset, required_tracks, saved_by_issuer, saved_by_subject)
+              VALUES (${repositoryId}, ${next}, ${encoded}::jsonb, ${encodedPreparation}::jsonb,
                       ${request.author.issuer}, ${request.author.subject})
             `
             yield* sql`
@@ -211,10 +259,13 @@ export class LabelingRulesets extends Context.Service<
           ),
         )
 
-      const result = yield* view(repositoryId)
       if (!saved) {
-        return yield* new RulesetConflict({ current: result })
+        return yield* new RulesetConflict({ current: yield* view(repositoryId) })
       }
+      // A revision that needs nothing, or whose tracks already verified,
+      // becomes active right away. Otherwise track completion promotes it.
+      yield* activation.promote(repositoryId).pipe(wrap("promote"))
+      const result = yield* view(repositoryId)
       yield* Effect.logInfo("Saved auto-labeling ruleset").pipe(
         Effect.annotateLogs({
           repositoryId,

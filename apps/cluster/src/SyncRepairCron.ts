@@ -2,6 +2,7 @@ import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as Singleton from "effect/unstable/cluster/Singleton"
 import { ContentPurge } from "./ContentPurge.ts"
+import { RulesetActivation } from "./Labeling/Activation.ts"
 import { REPAIR_PLANNER_NAME, SyncPlanner } from "./SyncPlanner.ts"
 
 export const SyncRepairCronName = REPAIR_PLANNER_NAME
@@ -16,6 +17,9 @@ export const SyncRepairCronLayer = Singleton.make(
     if (summary.planned) {
       yield* Effect.logInfo("Planned GitHub sync repairs").pipe(Effect.annotateLogs({ ...summary }))
     }
+    // Recovery for promotions whose post-verification attempt was lost.
+    const activation = yield* RulesetActivation
+    yield* activation.promoteAll
     const purge = yield* ContentPurge
     const purged = yield* purge.runDue(now)
     if (purged.purged > 0) {

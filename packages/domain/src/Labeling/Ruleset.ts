@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema"
 import { GitHubLabelDatabaseId, GitHubRepositoryDatabaseId } from "../GitHub/Id.ts"
 import { GitHubEntityKind, GitHubLabelAvailability } from "../GitHub/ReadModel.ts"
-import { SyncFreshness } from "../GitHub/Sync.ts"
+import { GitHubRepositoryTrack, SyncFreshness, SyncGeneration } from "../GitHub/Sync.ts"
 
 /**
  * Auto-labeling rulesets (design: "Ruleset", "Concrete evaluator"). A
@@ -130,6 +130,28 @@ export const SynchronizedLabel = Schema.Struct({
 }).annotate({ identifier: "SynchronizedLabel" })
 export type SynchronizedLabel = typeof SynchronizedLabel.Type
 
+/**
+ * The track generations a revision asked synchronization to verify before
+ * it may become active (design: "Rules changes and repair").
+ */
+export const RulesetPreparation = Schema.Record(Schema.String, SyncGeneration).annotate({
+  identifier: "RulesetPreparation",
+})
+export type RulesetPreparation = typeof RulesetPreparation.Type
+
+/**
+ * Which tracks a ruleset needs qualified. Labels back every reference; the
+ * entities track carries issue and pull request summaries and labels; the
+ * pull request track carries base branch and draft state.
+ */
+export const requiredTracks = (ruleset: Ruleset): ReadonlyArray<GitHubRepositoryTrack> => {
+  const enabled = ruleset.rules.filter((rule) => rule.enabled)
+  if (enabled.length === 0) return []
+  const tracks: Array<GitHubRepositoryTrack> = ["labels", "entities"]
+  if (enabled.some((rule) => rule.target === "pull_request")) tracks.push("pull_requests")
+  return tracks
+}
+
 /** What the rule editor loads. */
 export const RulesetView = Schema.Struct({
   repositoryId: GitHubRepositoryDatabaseId,
@@ -137,6 +159,8 @@ export const RulesetView = Schema.Struct({
   configured: Ruleset,
   /** Null until synchronization has prepared a revision for evaluation. */
   activeRevision: Schema.NullOr(RulesetRevision),
+  /** Tracks the configured revision is still waiting on. Empty once active. */
+  pendingTracks: Schema.Array(GitHubRepositoryTrack),
   labels: Schema.Array(SynchronizedLabel),
   labelFreshness: SyncFreshness,
 }).annotate({ identifier: "RulesetView" })
