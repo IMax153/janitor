@@ -516,6 +516,17 @@ export const update = (model: Model, message: Message): UpdateReturn =>
             model: evo(model, {
               detail: () => Option.some(detail),
               detailError: () => Option.none<string>(),
+              repositories: Option.map((repositories) =>
+                repositories.map((repository) =>
+                  repository.repositoryId === repositoryId
+                    ? {
+                        ...repository,
+                        ruleCount: detail.configuration.rules.length,
+                        policyCount: detail.configuration.policies.length,
+                      }
+                    : repository,
+                ),
+              ),
             }),
           }
         : { model },

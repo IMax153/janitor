@@ -10,6 +10,8 @@ const repository = (
 ): RepositoryOverview => ({
   owner: "Effectful-Tech",
   enabled: true,
+  ruleCount: 12,
+  policyCount: 8,
   access: "accessible",
   configuredRevision: 1,
   activeRevision: 1,
@@ -21,6 +23,8 @@ const janitor = repository({
   repositoryId: "702",
   repo: "janitor",
   enabled: false,
+  ruleCount: 0,
+  policyCount: 0,
   configuredRevision: null,
   activeRevision: null,
 })
@@ -29,6 +33,8 @@ const website = repository({
   repo: "website",
   owner: "vercel",
   access: "lost",
+  ruleCount: 1,
+  policyCount: 1,
 })
 
 const repositories = [effect, janitor, website]
@@ -82,14 +88,12 @@ describe("RepositorySwitcher", () => {
     expect(RepositorySwitcher.matches(effect, "vercel")).toBe(false)
   })
 
-  it("says what each repository is doing, worst news first", () => {
-    expect(RepositorySwitcher.statusText(effect)).toBe("Enabled, revision 1")
-    expect(RepositorySwitcher.statusText(janitor)).toBe("Disabled")
-    // Lost access outranks being enabled.
-    expect(RepositorySwitcher.statusText(website)).toBe("No access")
-    expect(RepositorySwitcher.statusText({ ...effect, activeRevision: null })).toBe(
-      "Enabled, not configured",
-    )
+  it("shows whether Janitor is enabled, independently of access and revision", () => {
+    expect(RepositorySwitcher.statusText(effect)).toBe("Active")
+    expect(RepositorySwitcher.statusText(janitor)).toBe("Inactive")
+    // Enabled is independent of access and active revision.
+    expect(RepositorySwitcher.statusText(website)).toBe("Active")
+    expect(RepositorySwitcher.statusText({ ...effect, activeRevision: null })).toBe("Active")
   })
 
   it("shows the selected repository on the trigger", () => {
@@ -98,7 +102,9 @@ describe("RepositorySwitcher", () => {
       Scene.given(RepositorySwitcher.init()),
       Scene.expect(Scene.text("EF")).toExist(),
       Scene.expect(Scene.text("effect")).toExist(),
-      Scene.expect(Scene.text("Enabled, revision 1")).toExist(),
+      Scene.expect(Scene.text("Effectful-Tech")).toExist(),
+      Scene.expect(Scene.text("12 rules")).toBeAbsent(),
+      Scene.expect(Scene.text("Active")).toExist(),
     )
   })
 
@@ -107,9 +113,7 @@ describe("RepositorySwitcher", () => {
       { update: RepositorySwitcher.update, view: sceneView() },
       Scene.given(RepositorySwitcher.init()),
       Scene.expect(Scene.role("button")).toHaveClass("border"),
-      Scene.expect(Scene.role("button")).toHaveClass(
-        "bg-[color-mix(in_oklch,var(--sidebar),black_4%)]",
-      ),
+      Scene.expect(Scene.role("button")).toHaveClass("bg-card"),
     )
   })
 
@@ -117,7 +121,7 @@ describe("RepositorySwitcher", () => {
     Scene.scene(
       { update: RepositorySwitcher.update, view: sceneView() },
       Scene.given(RepositorySwitcher.init()),
-      Scene.expect(Scene.placeholder("Search repositories...")).toBeAbsent(),
+      Scene.expect(Scene.placeholder("Find a repository…")).toBeAbsent(),
     )
   })
 
@@ -125,12 +129,18 @@ describe("RepositorySwitcher", () => {
     Scene.scene(
       { update: RepositorySwitcher.update, view: sceneView() },
       Scene.given(opened()),
-      Scene.expect(Scene.placeholder("Search repositories...")).toExist(),
-      Scene.expect(Scene.text("Effectful-Tech")).toExist(),
+      Scene.expect(Scene.placeholder("Find a repository…")).toExist(),
       Scene.expect(Scene.text("vercel")).toExist(),
       Scene.expect(Scene.text("janitor")).toExist(),
-      Scene.expect(Scene.text("Disabled")).toExist(),
-      Scene.expect(Scene.text("No access")).toExist(),
+      Scene.expect(Scene.text("Inactive")).toExist(),
+      Scene.expect(Scene.text("3 repositories")).toExist(),
+      Scene.expect(Scene.text("2 active")).toExist(),
+      Scene.expect(Scene.text("12 rules")).toExist(),
+      Scene.expect(Scene.text("8 policies")).toExist(),
+      Scene.expect(Scene.text("0 rules")).toExist(),
+      Scene.expect(Scene.text("0 policies")).toExist(),
+      Scene.expect(Scene.text("1 rule")).toExist(),
+      Scene.expect(Scene.text("1 policy")).toExist(),
       ...mounts,
     )
   })
@@ -165,7 +175,7 @@ describe("RepositorySwitcher", () => {
         RepositorySwitcher.OutMessage.SelectedRepository({ repositoryId: "702" }),
       ),
       Scene.Command.resolve(Popover.FocusButton, Popover.Message.CompletedFocusButton()),
-      Scene.expect(Scene.placeholder("Search repositories...")).toBeAbsent(),
+      Scene.expect(Scene.placeholder("Find a repository…")).toBeAbsent(),
       Scene.Mount.expectEnded(Popover.AnchorPopover, Popover.PortalPopoverBackdrop),
     )
   })
@@ -177,7 +187,7 @@ describe("RepositorySwitcher", () => {
       ...mounts,
       Scene.click(".fixed.inset-0"),
       Scene.Command.resolve(Popover.FocusButton, Popover.Message.CompletedFocusButton()),
-      Scene.expect(Scene.placeholder("Search repositories...")).toBeAbsent(),
+      Scene.expect(Scene.placeholder("Find a repository…")).toBeAbsent(),
       Scene.Mount.expectEnded(Popover.AnchorPopover, Popover.PortalPopoverBackdrop),
     )
   })

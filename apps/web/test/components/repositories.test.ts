@@ -11,6 +11,8 @@ const one: Repositories.RepositoryOverview = {
   owner: "effect",
   repo: "one",
   enabled: true,
+  ruleCount: 12,
+  policyCount: 8,
   access: "accessible",
   configuredRevision: 1,
   activeRevision: 1,
@@ -114,6 +116,10 @@ describe("Repositories", () => {
       Story.model((next) => {
         expect(next.detail).toEqual(Option.some(detail))
         expect(next.maybeConsent).toEqual(Option.some(consent))
+        const repositories = Option.getOrThrow(next.repositories)
+        expect(repositories[0]?.ruleCount).toBe(configuration.rules.length)
+        expect(repositories[0]?.policyCount).toBe(configuration.policies.length)
+        expect(repositories[1]).toEqual(two)
       }),
     )
   })

@@ -71,6 +71,10 @@ export const RepositoryOverview = Schema.Struct({
   owner: Schema.String,
   repo: Schema.String,
   enabled: Schema.Boolean,
+  /** All configured rules, including disabled rules. */
+  ruleCount: Schema.Int,
+  /** All policies, including unpublished drafts. */
+  policyCount: Schema.Int,
   access: GitHubRepositoryAccess,
   configuredRevision: Schema.NullOr(LabelingRevision),
   activeRevision: Schema.NullOr(LabelingRevision),

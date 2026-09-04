@@ -4,6 +4,25 @@ Static HTML, no build. Open any file in a browser; the button in the corner
 toggles dark mode. `mockup.css` mirrors the tokens in `apps/web/src/styles.css`
 so anything here can be lifted into Foldkit views.
 
+## Repository switcher studies
+
+Isolated closed and open switchers, without the rest of the page. Each study
+has theme switching, repository search, and selection. Open the HTML files
+directly; no server or build is required.
+
+| File                                                                         | Direction                                                                |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| [7a-repository-switcher-compact.html](7a-repository-switcher-compact.html)   | Compact owner groups with rule and policy counts.                        |
+| [7b-repository-switcher-activity.html](7b-repository-switcher-activity.html) | A quieter activity summary: items labeled in the last seven days.        |
+| [7c-repository-switcher-labels.html](7c-repository-switcher-labels.html)     | Two managed-label previews per repository, with a remaining-label count. |
+
+All closed controls contain only the repository icon, owner, name, and active
+state. Active means Janitor is enabled; revision and synchronization details
+are deliberately absent. Repositories, counts, and label previews are sample
+data. Counts and label previews would need additional data when implemented.
+Shared presentation and prototype behavior live in `repository-switcher.css`
+and `repository-switcher.js`.
+
 ## What is wrong with the current dashboard
 
 `apps/web/src/components/repositories.ts` renders everything for one repository
@@ -30,12 +49,12 @@ Every mockup keeps the same header: brand, a **repository switcher** that sets
 the context for the whole dashboard (`⌘K`), page tabs with counts, revision
 status, sync, theme. Mockup 2 shows the switcher open.
 
-| File | Page | Idea |
-| --- | --- | --- |
-| `1-policy-workbench.html` | Policy editor | Three panes: policy rail, editor with completion, inspector (manifest, track readiness, quick bench, bindings). Status bar carries draft/publish state. |
-| `2-policy-split-bench.html` | Policy editor | Editor left, full bench right as a table with an inline trace drawer. Segmented control switches the bench subject between draft, published, and whole configuration. |
-| `3-rules-ledger.html` | Rules | Revision pipeline strip, rules grouped by exclusive group with drag priorities and a 7-day sparkline, inline edit row with plain-language explanation of the two settings, labels rail showing bound/unbound/missing labels. |
-| `4-rules-board.html` | Rules | Each rule drawn as a pipeline (policy → add label · no match → remove/leave), recent decisions under the table, and a side sheet editor with radio explanations, live preview, and a conflict banner. |
+| File                        | Page          | Idea                                                                                                                                                                                                                         |
+| --------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `1-policy-workbench.html`   | Policy editor | Three panes: policy rail, editor with completion, inspector (manifest, track readiness, quick bench, bindings). Status bar carries draft/publish state.                                                                      |
+| `2-policy-split-bench.html` | Policy editor | Editor left, full bench right as a table with an inline trace drawer. Segmented control switches the bench subject between draft, published, and whole configuration.                                                        |
+| `3-rules-ledger.html`       | Rules         | Revision pipeline strip, rules grouped by exclusive group with drag priorities and a 7-day sparkline, inline edit row with plain-language explanation of the two settings, labels rail showing bound/unbound/missing labels. |
+| `4-rules-board.html`        | Rules         | Each rule drawn as a pipeline (policy → add label · no match → remove/leave), recent decisions under the table, and a side sheet editor with radio explanations, live preview, and a conflict banner.                        |
 
 ## Decisions the mockups take
 
@@ -54,22 +73,22 @@ status, sync, theme. Mockup 2 shows the switcher open.
 Built on mockup 1 with more spacing and less chrome. `workbench.css` adds the
 sidebar styles and larger control sizes.
 
-| File | Navigation | Layout |
-| --- | --- | --- |
-| `5a-workbench-sidebar.html` | Vertical sidebar with the repository switcher at the top | Policy list, editor, and a sparse inspector (validation, tracks, last test as three numbers, used by, published). |
-| `5b-workbench-nested-nav.html` | Vertical sidebar with policies nested under the Policies item | Two panes only: editor and a column of cards (status, test, used by, history). No separate policy list. |
-| `5c-workbench-focused.html` | Top tabs | One centered column: editor, then a 2×2 grid of cards below it. Reads like a document page. |
-| `5d-workbench-rail-bench.html` | Icon rail | Policy list, editor above, bench below as a full-width table. Inspector information is folded into one line in the page bar. |
+| File                           | Navigation                                                    | Layout                                                                                                                       |
+| ------------------------------ | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `5a-workbench-sidebar.html`    | Vertical sidebar with the repository switcher at the top      | Policy list, editor, and a sparse inspector (validation, tracks, last test as three numbers, used by, published).            |
+| `5b-workbench-nested-nav.html` | Vertical sidebar with policies nested under the Policies item | Two panes only: editor and a column of cards (status, test, used by, history). No separate policy list.                      |
+| `5c-workbench-focused.html`    | Top tabs                                                      | One centered column: editor, then a 2×2 grid of cards below it. Reads like a document page.                                  |
+| `5d-workbench-rail-bench.html` | Icon rail                                                     | Policy list, editor above, bench below as a full-width table. Inspector information is folded into one line in the page bar. |
 
 ## Round 3: the rest of the app in the 5a style
 
-| File | Screen |
-| --- | --- |
-| `6a-policy-bench.html` | Bench opened from a policy. Table of open items with draft and published outcomes side by side, a "would" column, and a trace card plus facts card for the selected row. |
-| `6b-policy-history.html` | Version list on the left, a diff between versions on the right, with what the selected version read and which rules used it. |
-| `6c-rules.html` | Same three panes as 5a: rule list grouped by exclusive group with enable switches, the selected rule as a form (label, policy, no-match choice, group, drag-to-order), and an inspector with policy, tracks, preview counts, and history. |
-| `6d-activity.html` | Day-grouped feed mixing label changes and configuration changes, with a status pill and a one-line reason under each item. |
-| `6e-home.html` | Four stats, one attention banner, recent label changes, synchronization per track, AI toggle, and a needs-attention list. |
+| File                     | Screen                                                                                                                                                                                                                                    |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `6a-policy-bench.html`   | Bench opened from a policy. Table of open items with draft and published outcomes side by side, a "would" column, and a trace card plus facts card for the selected row.                                                                  |
+| `6b-policy-history.html` | Version list on the left, a diff between versions on the right, with what the selected version read and which rules used it.                                                                                                              |
+| `6c-rules.html`          | Same three panes as 5a: rule list grouped by exclusive group with enable switches, the selected rule as a form (label, policy, no-match choice, group, drag-to-order), and an inspector with policy, tracks, preview counts, and history. |
+| `6d-activity.html`       | Day-grouped feed mixing label changes and configuration changes, with a status pill and a one-line reason under each item.                                                                                                                |
+| `6e-home.html`           | Four stats, one attention banner, recent label changes, synchronization per track, AI toggle, and a needs-attention list.                                                                                                                 |
 
 ## The Tailwind port
 
@@ -78,12 +97,12 @@ Tailwind v4 utilities, ready to move into Foldkit a component at a time. The
 CSS-file mockups above stay as they are; they are the reference, not the
 source.
 
-| File | What it is |
-| --- | --- |
-| `tw/policy-workbench.html` | The policy screen. Regions are separated by comments naming the Foldkit component each will become. |
-| `tw/theme.css` | Tailwind entry. The token block is copied from `apps/web/src/styles.css`, plus the status colours (`ok`, `warn`, `info`) and the JSON syntax colours the app does not define yet. |
-| `tw/policy-workbench.css` | Compiled output, checked in so the page opens without a build step. |
-| `tw/build.mjs` | Recompiles it: `node docs/mockups/tw/build.mjs`. There is no Tailwind CLI in the workspace, so this drives the compiler the Vite plugin uses. |
+| File                       | What it is                                                                                                                                                                        |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tw/policy-workbench.html` | The policy screen. Regions are separated by comments naming the Foldkit component each will become.                                                                               |
+| `tw/theme.css`             | Tailwind entry. The token block is copied from `apps/web/src/styles.css`, plus the status colours (`ok`, `warn`, `info`) and the JSON syntax colours the app does not define yet. |
+| `tw/policy-workbench.css`  | Compiled output, checked in so the page opens without a build step.                                                                                                               |
+| `tw/build.mjs`             | Recompiles it: `node docs/mockups/tw/build.mjs`. There is no Tailwind CLI in the workspace, so this drives the compiler the Vite plugin uses.                                     |
 
 Porting notes:
 

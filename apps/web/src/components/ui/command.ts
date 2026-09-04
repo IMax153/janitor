@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils"
 import * as Icon from "@/lib/icons"
 import { Search } from "lucide"
 import { inputGroup, inputGroupAddon, inputGroupInput } from "./input-group"
+import * as Button from "./button"
 
 type Child = Html | string
 
@@ -46,6 +47,9 @@ export const container = <M>(h: HtmlBuilder<M>, config: CommandContainerConfig):
   )
 
 export type CommandInputConfig<M> = {
+  readonly ariaLabel?: string
+  readonly wrapperClassName?: string
+  readonly groupClassName?: string
   readonly id?: string
   readonly value?: string
   readonly placeholder?: string
@@ -56,17 +60,22 @@ export type CommandInputConfig<M> = {
 
 export const input = <M>(h: HtmlBuilder<M>, config: CommandInputConfig<M>): Html =>
   h.div(
-    [h.Class(cn("p-1 pb-0")), h.DataAttribute("slot", "command-input-wrapper")],
+    [
+      h.Class(cn("p-1 pb-0", config.wrapperClassName)),
+      h.DataAttribute("slot", "command-input-wrapper"),
+    ],
     [
       inputGroup(h, {
-        className:
+        className: cn(
           "bg-input/30 border-input/30 h-8! rounded-lg! shadow-none! *:data-[slot=input-group-addon]:pl-2!",
+          config.groupClassName,
+        ),
         children: [
           inputGroupAddon(h, { children: [Icon.view(h, Search, "size-4 shrink-0 opacity-50")] }),
           inputGroupInput(h, {
             ...config,
             id: config.id ?? "command-input",
-            ariaLabel: "Search commands",
+            ariaLabel: config.ariaLabel ?? "Search commands",
             className: cn(commandInputClass, config.className),
             attributes: [h.DataAttribute("slot", "command-input")],
           }),
@@ -80,7 +89,10 @@ export type CommandListConfig = StyleConfig & {
 }
 
 export const list = <M>(h: HtmlBuilder<M>, config: CommandListConfig): Html =>
-  h.div([h.Class(cn(commandListClass)), h.DataAttribute("slot", "command-list")], config.children)
+  h.div(
+    [h.Class(cn(commandListClass, config.className)), h.DataAttribute("slot", "command-list")],
+    config.children,
+  )
 
 export type CommandEmptyConfig = StyleConfig & {
   readonly children: ReadonlyArray<Child>
@@ -92,6 +104,8 @@ export const empty = <M>(h: HtmlBuilder<M>, config: CommandEmptyConfig): Html =>
 export type CommandGroupConfig = StyleConfig & {
   /** Rendered above the items and used as the group's accessible name. */
   readonly heading?: string
+  readonly headingSuffix?: Child
+  readonly headingClassName?: string
   readonly children: ReadonlyArray<Child>
 }
 
@@ -108,16 +122,18 @@ export const group = <M>(h: HtmlBuilder<M>, config: CommandGroupConfig): Html =>
       : [
           h.div(
             [
-              h.Class(cn(commandGroupHeadingClass)),
+              h.Class(cn(commandGroupHeadingClass, config.headingClassName)),
               h.DataAttribute("slot", "command-group-heading"),
             ],
-            [config.heading],
+            [config.heading, ...(config.headingSuffix === undefined ? [] : [config.headingSuffix])],
           ),
           ...config.children,
         ],
   )
 
 export type CommandItemConfig<M> = StyleConfig & {
+  /** Interactive items use the shared Foldkit button for native keyboard activation. */
+  readonly onClick?: M
   readonly isSelected?: boolean
   readonly isDisabled?: boolean
   readonly attributes?: ReadonlyArray<Attribute<M>>
@@ -125,17 +141,36 @@ export type CommandItemConfig<M> = StyleConfig & {
 }
 
 export const item = <M>(h: HtmlBuilder<M>, config: CommandItemConfig<M>): Html =>
-  h.div(
-    [
-      h.Class(cn(commandItemClass, config.className)),
-      h.DataAttribute("slot", "command-item"),
-      h.Role("menuitem"),
-      ...(config.isSelected === true ? [h.DataAttribute("selected", "true")] : []),
-      ...(config.isDisabled === true ? [h.DataAttribute("disabled", "true")] : []),
-      ...(config.attributes ?? []),
-    ],
-    config.children,
-  )
+  config.onClick === undefined
+    ? h.div(
+        [
+          h.Class(cn(commandItemClass, config.className)),
+          h.DataAttribute("slot", "command-item"),
+          h.Role("menuitem"),
+          ...(config.isSelected === true ? [h.DataAttribute("selected", "true")] : []),
+          ...(config.isDisabled === true ? [h.DataAttribute("disabled", "true")] : []),
+          ...(config.attributes ?? []),
+        ],
+        config.children,
+      )
+    : Button.view(h, {
+        variant: "ghost",
+        onClick: config.onClick,
+        isDisabled: config.isDisabled,
+        className: cn(
+          commandItemClass,
+          "h-auto w-full border-0 text-left font-normal",
+          config.className,
+        ),
+        attributes: [
+          h.DataAttribute("slot", "command-item"),
+          ...(config.isSelected === true
+            ? [h.DataAttribute("selected", "true"), h.Attribute("aria-current", "true")]
+            : []),
+          ...(config.attributes ?? []),
+        ],
+        label: h.span([h.Class("contents")], config.children),
+      })
 
 export type CommandSeparatorConfig = StyleConfig
 

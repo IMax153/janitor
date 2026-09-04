@@ -1,5 +1,5 @@
 import { Button as FoldkitButton } from "@foldkit/ui"
-import type { Attribute, Html, HtmlBuilder } from "foldkit/html"
+import type { Attribute, ChildAttribute, Html, HtmlBuilder } from "foldkit/html"
 import { cn } from "@/lib/utils"
 
 export type ButtonVariant = (typeof buttonVariantKeys)[number]
@@ -63,7 +63,7 @@ export type ButtonConfig<M> = {
   readonly isDisabled?: boolean | undefined
   readonly isAutofocus?: boolean | undefined
   readonly onClick?: M | undefined
-  readonly attributes?: ReadonlyArray<Attribute<M>>
+  readonly attributes?: ReadonlyArray<Attribute<M> | ChildAttribute>
 }
 
 export const view = <M>(h: HtmlBuilder<M>, config: ButtonConfig<M>): Html =>

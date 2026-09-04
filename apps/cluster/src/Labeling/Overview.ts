@@ -30,6 +30,8 @@ const RepositoryRow = Schema.Struct({
   owner: Schema.String,
   repo: Schema.String,
   enabled: Schema.Boolean,
+  rule_count: Schema.Int,
+  policy_count: Schema.Int,
   access: GitHubRepositoryAccess,
   configured_revision: Schema.NullOr(RevisionFromText),
   active_revision: Schema.NullOr(RevisionFromText),
@@ -76,7 +78,9 @@ export class LabelingOverview extends Context.Service<
 
     const repositories = sql`
       SELECT r.repository_id, r.owner, r.repo, r.enabled, r.access,
-             l.configured_revision::text, l.active_revision::text
+             l.configured_revision::text, l.active_revision::text,
+             (SELECT count(*)::int FROM labeling_rule WHERE repository_id = r.repository_id) AS rule_count,
+             (SELECT count(*)::int FROM labeling_policy WHERE repository_id = r.repository_id) AS policy_count
       FROM github_repository r
       LEFT JOIN labeling_repository_rules l ON l.repository_id = r.repository_id
       ORDER BY r.owner, r.repo
@@ -88,6 +92,8 @@ export class LabelingOverview extends Context.Service<
           owner: row.owner,
           repo: row.repo,
           enabled: row.enabled,
+          ruleCount: row.rule_count,
+          policyCount: row.policy_count,
           access: row.access,
           configuredRevision: row.configured_revision,
           activeRevision: row.active_revision,
