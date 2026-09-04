@@ -1,0 +1,72 @@
+# Dashboard mockups
+
+Static HTML, no build. Open any file in a browser; the button in the corner
+toggles dark mode. `mockup.css` mirrors the tokens in `apps/web/src/styles.css`
+so anything here can be lifted into Foldkit views.
+
+## What is wrong with the current dashboard
+
+`apps/web/src/components/repositories.ts` renders everything for one repository
+on a single page: a repository list rail, an inline panel slot, then Policies,
+Rules and Reconciliations tables stacked with an AI consent block between them.
+
+- **Repository selection is a page-level list**, so the rail spends 16rem on a
+  handful of names and the rest of the page has no persistent context.
+- **Editors push the tables down.** Opening a policy, a rule, or the bench
+  inserts a panel above the tables, so the thing you are editing and the thing
+  you are editing it against never sit side by side.
+- **The policy editor shows no consequences.** Validation is a single line; the
+  manifest (facts, tracks, references) and the bench live in separate panels.
+- **Rules are a flat table.** Groups and priorities are just columns, so the
+  exclusive-group semantics that decide which label wins are invisible.
+- **Nothing shows what the system did.** Reconciliations render as ids and
+  generations rather than label changes on numbered items.
+- **Copy is generic.** "On no match: ensure-absent" reads as a wire value, not
+  as an instruction to the maintainer.
+
+## The mockups
+
+Every mockup keeps the same header: brand, a **repository switcher** that sets
+the context for the whole dashboard (`⌘K`), page tabs with counts, revision
+status, sync, theme. Mockup 2 shows the switcher open.
+
+| File | Page | Idea |
+| --- | --- | --- |
+| `1-policy-workbench.html` | Policy editor | Three panes: policy rail, editor with completion, inspector (manifest, track readiness, quick bench, bindings). Status bar carries draft/publish state. |
+| `2-policy-split-bench.html` | Policy editor | Editor left, full bench right as a table with an inline trace drawer. Segmented control switches the bench subject between draft, published, and whole configuration. |
+| `3-rules-ledger.html` | Rules | Revision pipeline strip, rules grouped by exclusive group with drag priorities and a 7-day sparkline, inline edit row with plain-language explanation of the two settings, labels rail showing bound/unbound/missing labels. |
+| `4-rules-board.html` | Rules | Each rule drawn as a pipeline (policy → add label · no match → remove/leave), recent decisions under the table, and a side sheet editor with radio explanations, live preview, and a conflict banner. |
+
+## Decisions the mockups take
+
+- Repository is global context, chosen in the header, not a sidebar list.
+- Policies, Rules, and Activity are separate tabs. The current single page hides
+  too much below the fold once a repository has more than a few policies.
+- No modals for editing. Inline rows (mockup 3) or a side sheet (mockup 4) keep
+  the table in view.
+- Every save names the revision it creates, and the header shows whether that
+  revision is active or waiting on a track.
+- The bench is never more than one click from the editor, and the editor pages
+  show a summary of the last run without opening it.
+
+## Round 2: calmer workbench variants
+
+Built on mockup 1 with more spacing and less chrome. `workbench.css` adds the
+sidebar styles and larger control sizes.
+
+| File | Navigation | Layout |
+| --- | --- | --- |
+| `5a-workbench-sidebar.html` | Vertical sidebar with the repository switcher at the top | Policy list, editor, and a sparse inspector (validation, tracks, last test as three numbers, used by, published). |
+| `5b-workbench-nested-nav.html` | Vertical sidebar with policies nested under the Policies item | Two panes only: editor and a column of cards (status, test, used by, history). No separate policy list. |
+| `5c-workbench-focused.html` | Top tabs | One centered column: editor, then a 2×2 grid of cards below it. Reads like a document page. |
+| `5d-workbench-rail-bench.html` | Icon rail | Policy list, editor above, bench below as a full-width table. Inspector information is folded into one line in the page bar. |
+
+## Round 3: the rest of the app in the 5a style
+
+| File | Screen |
+| --- | --- |
+| `6a-policy-bench.html` | Bench opened from a policy. Table of open items with draft and published outcomes side by side, a "would" column, and a trace card plus facts card for the selected row. |
+| `6b-policy-history.html` | Version list on the left, a diff between versions on the right, with what the selected version read and which rules used it. |
+| `6c-rules.html` | Same three panes as 5a: rule list grouped by exclusive group with enable switches, the selected rule as a form (label, policy, no-match choice, group, drag-to-order), and an inspector with policy, tracks, preview counts, and history. |
+| `6d-activity.html` | Day-grouped feed mixing label changes and configuration changes, with a status pill and a one-line reason under each item. |
+| `6e-home.html` | Four stats, one attention banner, recent label changes, synchronization per track, AI toggle, and a needs-attention list. |

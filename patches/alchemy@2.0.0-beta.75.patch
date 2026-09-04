@@ -1,22 +1,56 @@
 diff --git a/bin/exec.js b/bin/exec.js
+index 6010e2204b867f0517661c74a9e561a7ab7858fa..3b876460fb67c1e74dafef4c06aeefb1df9f1bf5 100644
 --- a/bin/exec.js
 +++ b/bin/exec.js
-@@ -250 +250 @@ var init_Profile = __esmMin((() => {
+@@ -247,7 +247,7 @@ var init_Profile = __esmMin((() => {
+ 	init_AuthProvider$1();
+ 	rootDir = path.join(os.homedir(), ".alchemy");
+ 	configFilePath = path.join(rootDir, "profiles.json");
 -	ALCHEMY_PROFILE = Config.string("ALCHEMY_PROFILE").pipe(Config.withDefault("default"));
 +	ALCHEMY_PROFILE = Config.String("ALCHEMY_PROFILE").pipe(Config.withDefault("default"));
-@@ -1137 +1137 @@ var init_RpcServerEnvironment = __esmMin((() => {
+ 	EffectContext.Service()("Alchemy::Profiles");
+ 	emptyConfig = () => ({
+ 		version: 0,
+@@ -1134,7 +1134,7 @@ var init_RpcServerEnvironment = __esmMin((() => {
+ 	SESSION_ENV_PARAM = "alchemy-session-env";
+ 	encodeSessionEnvironment = (env) => JSON.stringify(env);
+ 	RPC_SERVER_ENVIRONMENT_KEY = "ALCHEMY_RPC_SERVER_ENVIRONMENT";
 -	Config.string(RPC_SERVER_ENVIRONMENT_KEY).pipe(Config.map((raw) => JSON.parse(raw)));
 +	Config.String(RPC_SERVER_ENVIRONMENT_KEY).pipe(Config.map((raw) => JSON.parse(raw)));
-@@ -1195 +1195 @@ var init_RpcProviderProxy = __esmMin((() => {
+ }));
+ //#endregion
+ //#region lib/Local/RpcProviderProxy.js
+@@ -1192,7 +1192,7 @@ var init_RpcProviderProxy = __esmMin((() => {
+ 			return unwrapRpcHandlers(provider, ["tail"]);
+ 		}) });
+ 	});
 -	fromEnv = () => Layer.effect(RpcProviderProxy, Config.string(SPAWNER_URL_ENV_KEY).pipe(Effect.flatMap(make$2)));
 +	fromEnv = () => Layer.effect(RpcProviderProxy, Config.String(SPAWNER_URL_ENV_KEY).pipe(Effect.flatMap(make$2)));
-@@ -1318 +1318 @@ const parseSidecarLogLine = (raw) => {
+ }));
+ //#endregion
+ //#region lib/Local/RpcSpawner.js
+@@ -1315,7 +1315,7 @@ const parseSidecarLogLine = (raw) => {
+ * a no-op, and if the connection drops the spawner's own fallback printing
+ * takes over.
+ */
 -const forwardSidecarLogs = Config.string(SPAWNER_URL_ENV_KEY).pipe(Effect.flatMap((spawnerUrl) => {
 +const forwardSidecarLogs = Config.String(SPAWNER_URL_ENV_KEY).pipe(Effect.flatMap((spawnerUrl) => {
-@@ -1489 +1489 @@ const demandCredentials = Effect.fn("Alchemy.demandCredentials")(function* (dema
+ 	return Effect.gen(function* () {
+ 		yield* (yield* (yield* HttpClient.HttpClient).get(new URL(LOGS_PATH, spawnerUrl).toString())).stream.pipe(Stream.decodeText, Stream.splitLines, Stream.runForEach((raw) => Effect.suspend(() => {
+ 			const parsed = parseSidecarLogLine(raw);
+@@ -1486,7 +1486,7 @@ const demandCredentials = Effect.fn("Alchemy.demandCredentials")(function* (dema
+ 	const profile = Option.getOrUndefined(yield* Effect.serviceOption(AlchemyProfile));
+ 	if (registry === void 0 || profile === void 0) return;
+ 	const profileName = yield* ALCHEMY_PROFILE;
 -	const ci = yield* Config.boolean("CI").pipe(Config.withDefault(false));
 +	const ci = yield* Config.Boolean("CI").pipe(Config.withDefault(false));
-@@ -3746,4 +3746,4 @@ var init_Env = __esmMin((() => {
+ 	const nonInteractive = options?.nonInteractive ?? isNonInteractive();
+ 	for (const demand of demands) {
+ 		const auth = registry[demand.provider];
+@@ -3743,10 +3743,10 @@ var getEnv, getEnvRequired, getEnvRedacted, getEnvRedactedRequired, retryOnce;
+ var init_Env = __esmMin((() => {
+ 	init_Clank();
+ 	init_AuthProvider$1();
 -	getEnv = (key) => Config.string(key).pipe(Effect.orElseSucceed(() => void 0));
 -	getEnvRequired = (key) => Config.string(key).pipe(Effect.catch(() => Effect.fail(new AuthError({ message: `Missing required env: ${key}` }))));
 -	getEnvRedacted = (key) => Config.redacted(key).pipe(Effect.orElseSucceed(() => void 0));
@@ -25,7 +59,13 @@ diff --git a/bin/exec.js b/bin/exec.js
 +	getEnvRequired = (key) => Config.String(key).pipe(Effect.catch(() => Effect.fail(new AuthError({ message: `Missing required env: ${key}` }))));
 +	getEnvRedacted = (key) => Config.Redacted(key).pipe(Effect.orElseSucceed(() => void 0));
 +	getEnvRedactedRequired = (key) => Config.Redacted(key).pipe(Effect.catch(() => Effect.fail(new AuthError({ message: `Missing required env: ${key}` }))));
-@@ -3763,6 +3763,6 @@ init_AuthProvider$1();
+ 	retryOnce = (self) => self.pipe(Effect.retry({
+ 		times: 1,
+ 		while: (e) => e instanceof PromptCancelled
+@@ -3760,12 +3760,12 @@ var init_Env = __esmMin((() => {
+ init_AlchemyContext();
+ init_AuthProvider$1();
+ init_Profile();
 -Config.string("AWS_PROFILE").pipe(Config.withDefault("default"));
 -Config.string("AWS_REGION");
 -Config.string("AWS_ACCOUNT_ID");
@@ -38,14 +78,29 @@ diff --git a/bin/exec.js b/bin/exec.js
 +Config.String("AWS_ACCESS_KEY_ID");
 +Config.Redacted("AWS_SECRET_ACCESS_KEY");
 +Config.Redacted("AWS_SESSION_TOKEN");
-@@ -3786 +3786 @@ Layer.effect(AWSEnvironment, Effect.gen(function* () {
+ Data.TaggedError("AWS::Environment::FailedToGetAccount");
+ var AWSEnvironment = class AWSEnvironment extends EffectContext.Service()("AWS::Environment") {
+ 	static current = AWSEnvironment.use((env) => env);
+@@ -3783,7 +3783,7 @@ Layer.effect(AWSEnvironment, Effect.gen(function* () {
+ 	const profile = yield* AlchemyProfile;
+ 	const auth = yield* getAuthProvider("AWS");
+ 	const profileName = yield* ALCHEMY_PROFILE;
 -	const ci = yield* Config.boolean("CI").pipe(Config.withDefault(false));
 +	const ci = yield* Config.Boolean("CI").pipe(Config.withDefault(false));
-@@ -5898,2 +5898,2 @@ var __rewriteRelativeImportExtension = function(path, preserveJsx) {
+ 	const dev = Option.match(yield* Effect.serviceOption(AlchemyContext), {
+ 		onNone: () => false,
+ 		onSome: (ctx) => ctx.dev
+@@ -5895,8 +5895,8 @@ var __rewriteRelativeImportExtension = function(path, preserveJsx) {
+ 	});
+ 	return path;
+ };
 -const USER = Config.string("USER").pipe(Config.orElse(() => Config.string("USERNAME")), Config.withDefault("unknown"));
 -const STAGE = Config.string("STAGE").pipe(Config.option, (a) => a, Effect.map(Option.getOrUndefined));
 +const USER = Config.String("USER").pipe(Config.orElse(() => Config.String("USERNAME")), Config.withDefault("unknown"));
 +const STAGE = Config.String("STAGE").pipe(Config.option, (a) => a, Effect.map(Option.getOrUndefined));
+ const stage = Flag.string("stage").pipe(Flag.withSchema(Schema.String.check(Schema.isPattern(/^[a-z0-9]+([-_a-z0-9]+)*$/gi))), Flag.withDescription("Stage to deploy to, defaults to dev_${USER}"), Flag.optional, Flag.map(Option.getOrUndefined), Flag.mapEffect(Effect.fn(function* (stage) {
+ 	if (stage) return stage;
+ 	return yield* STAGE.pipe(Effect.catch(() => Effect.fail(new CliError.MissingOption({ option: "stage" }))), Effect.flatMap((s) => s === void 0 ? USER.pipe(Effect.map((user) => `dev_${user}`), Effect.catch(() => Effect.succeed("unknown"))) : Effect.succeed(s)));
 diff --git a/lib/AWS/EKS/KubernetesAdapter.js b/lib/AWS/EKS/KubernetesAdapter.js
 index a1b4551de389d2971a75acfb7ae2bf51de4b4861..6edf6967283766143c6486fe9650f723f9117c01 100644
 --- a/lib/AWS/EKS/KubernetesAdapter.js
@@ -294,7 +349,7 @@ index 06377d115e6ce1aa9ef062d1bdfebdc312cfb51f..e758ca16fe04943e5af4bbadce054801
  /**
   * Max concurrent `GET /zones/{id}/workers/routes` calls when observing the
 diff --git a/lib/Docker/Docker.js b/lib/Docker/Docker.js
-index ebd0d8dba81a384b85ff57e86fa51326eae305f1..42796fd3c1ff9a14a32a3ae1849e84bb2a0e4b1c 100644
+index ebd0d8dba81a384b85ff57e86fa51326eae305f1..23351729ac8ceaa9e9e44db71263f4b7f25833af 100644
 --- a/lib/Docker/Docker.js
 +++ b/lib/Docker/Docker.js
 @@ -14,7 +14,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
@@ -306,6 +361,15 @@ index ebd0d8dba81a384b85ff57e86fa51326eae305f1..42796fd3c1ff9a14a32a3ae1849e84bb
  export const DockerLive = Layer.effect(Docker, Effect.gen(function* () {
      const fs = yield* FileSystem.FileSystem;
      const path = yield* Path.Path;
+@@ -40,7 +40,7 @@ export const DockerLive = Layer.effect(Docker, Effect.gen(function* () {
+         if (result.exitCode === 0)
+             return Effect.void;
+         const stderr = result.stderr.replace(/^Error response from daemon: /, "");
+-        if (stderr.match(/no such/i) || stderr.match(/not found/i)) {
++        if (stderr.match(/no such/i) || stderr.match(/not found/i) || stderr.match(/not known/i)) {
+             return systemError({
+                 _tag: "NotFound",
+                 args,
 diff --git a/lib/Fly/BucketBinding.js b/lib/Fly/BucketBinding.js
 index 5bc32ff51a68ebba3644e8ec5f6a2ce903ba0f64..5b91871593534c6eb865089877bb18df47d4cfc8 100644
 --- a/lib/Fly/BucketBinding.js
@@ -971,7 +1035,7 @@ index 9d3f746a8fa13583936384c78f53362b424bae28..65bd9adda86d9a910ce1af5c3b261c2f
  ).pipe(
    Config.map((value) => value.trim()),
 diff --git a/src/Docker/Docker.ts b/src/Docker/Docker.ts
-index 029adf5cba36bcfdcdb073c4fb8135e28ef08041..088f9e673112e204f12a6fd958a2ca93ea7e639f 100644
+index 029adf5cba36bcfdcdb073c4fb8135e28ef08041..0eab9f7b85084d72433b6d3608598dae381f5899 100644
 --- a/src/Docker/Docker.ts
 +++ b/src/Docker/Docker.ts
 @@ -465,7 +465,7 @@ export interface CommandOutput {
@@ -983,6 +1047,15 @@ index 029adf5cba36bcfdcdb073c4fb8135e28ef08041..088f9e673112e204f12a6fd958a2ca93
    Effect.orElseSucceed(() => "docker"),
  );
  
+@@ -529,7 +529,7 @@ export const DockerLive = Layer.effect(
+             /^Error response from daemon: /,
+             "",
+           );
+-          if (stderr.match(/no such/i) || stderr.match(/not found/i)) {
++          if (stderr.match(/no such/i) || stderr.match(/not found/i) || stderr.match(/not known/i)) {
+             return systemError({
+               _tag: "NotFound",
+               args,
 diff --git a/src/Fly/BucketBinding.ts b/src/Fly/BucketBinding.ts
 index 3524bd6826614dd928df5478900ee02cbe5624e4..697508351c09a3abc84e50cdb3bf9aee08e56e69 100644
 --- a/src/Fly/BucketBinding.ts
