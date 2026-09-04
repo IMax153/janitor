@@ -455,16 +455,13 @@ export const view = Submodel.defineView<Model, Message>((model, h): Html => {
                 isDisabled: !canSubmit,
                 label: "Save draft",
               }),
-              Button.view(
-                h,
-                {
-                  size: "sm",
-                  onClick: Message.ClickedPublish(),
-                  isDisabled: !canSubmit,
-                  label: busy ? "Working" : "Publish",
-                },
-                [h.DataAttribute("action", "publish")],
-              ),
+              Button.view(h, {
+                size: "sm",
+                onClick: Message.ClickedPublish(),
+                isDisabled: !canSubmit,
+                label: busy ? "Working" : "Publish",
+                attributes: [h.DataAttribute("action", "publish")],
+              }),
             ],
           ),
         ],

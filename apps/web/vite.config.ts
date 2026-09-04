@@ -13,12 +13,14 @@ export default defineConfig({
     entries: ["src/entry.ts"],
   },
   server: {
-    // The app calls its API on the same origin. In development, forward it
-    // to the cluster Worker `alchemy dev` serves locally, where Access is
-    // simulated. Set JANITOR_API_ORIGIN to point at a deployed stage instead;
-    // that stage is behind Access, so also set CF_ACCESS_TOKEN to the output
-    // of `cloudflared access token`. The proxy rewrites the origin so the
-    // sync request still looks same-origin to the Worker.
+    // Deployed, the API is a second Worker on this same hostname, reached
+    // through a route. Routes are an edge feature and do not exist locally,
+    // so in development this proxy stands in for one: `alchemy dev` runs
+    // this server for the website Worker and the API Worker on 8787, where
+    // Access is simulated. Set JANITOR_API_ORIGIN to point at a deployed
+    // stage instead; that stage is behind Access, so also set
+    // CF_ACCESS_TOKEN to the output of `cloudflared access token`. The proxy
+    // rewrites the origin so writes still look same-origin to the Worker.
     proxy: {
       "/api": {
         target: process.env.JANITOR_API_ORIGIN ?? "http://localhost:8787",

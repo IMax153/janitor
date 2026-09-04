@@ -2,7 +2,7 @@ import * as DateTime from "effect/DateTime"
 import * as Option from "effect/Option"
 import { Story } from "foldkit/test"
 import { describe, expect, it } from "vite-plus/test"
-import * as SyncButton from "./sync-button"
+import * as SyncButton from "@/components/sync-button"
 
 const now = DateTime.makeUnsafe("2026-09-03T12:00:00.000Z")
 

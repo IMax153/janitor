@@ -1,7 +1,6 @@
 import * as AlchemyCloudflareCluster from "@effect/platform-cloudflare/AlchemyCloudflareCluster"
 import { ALCHEMY_DEV } from "alchemy"
 import * as Cloudflare from "alchemy/Cloudflare"
-import * as Command from "alchemy/Command"
 import * as Postgres from "alchemy/SQL/Postgres"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -15,13 +14,13 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import { GitHubEventsDeadLetterQueue, GitHubEventsQueue } from "./GitHub/EventQueue.ts"
 import { GitHubWebhookPayloadsBucket } from "./GitHub/PayloadStore.ts"
 import { ingressSecrets } from "./Ingress/GitHubWebhook.ts"
+import * as Access from "./Ingress/Access.ts"
 import { makeRoutesLayer } from "./Ingress/Routes.ts"
 import * as Config from "effect/Config"
 import * as PayloadCipher from "./PayloadCipher.ts"
 import * as OpenAiClient from "@effect/ai-openai-compat/OpenAiClient"
 import * as OpenAiLanguageModel from "@effect/ai-openai-compat/OpenAiLanguageModel"
 import * as Cause from "effect/Cause"
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { JanitorHyperdrive } from "./Database.ts"
@@ -72,11 +71,9 @@ import { WorkflowDispatcher } from "./WorkflowDispatcher.ts"
 import { WorkflowOutbox } from "./WorkflowOutbox.ts"
 import { WorkflowOutboxCronLayer, WorkflowOutboxCronName } from "./WorkflowOutboxCron.ts"
 
-/** The Zero Trust organization whose GitHub identity provider admits people. */
-const ACCESS_TEAM_DOMAIN = "effectful.cloudflareaccess.com"
-const ACCESS_GITHUB_IDENTITY_PROVIDER_ID = "0d007daa-be1b-4e31-b538-98a8048f6863"
-const ACCESS_GITHUB_ORGANIZATION = "Effectful-Tech"
-const DOMAIN = "janitor.effectful.co"
+/** The hostname both Workers serve. The website Worker owns the domain. */
+export const DOMAIN = "janitor.effectful.co"
+const ZONE = "effectful.co"
 /**
  * The audience `alchemy dev` stamps on its simulated Access context. Real
  * audiences are 64 hex characters, so this can never match a deployed one.
@@ -88,75 +85,30 @@ const LOCAL_DEV_PORT = 8787
 export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
   "ClusterWorker",
   Effect.gen(function* () {
-    // Only `alchemy dev` sets this. It decides two things: whether the
-    // Access applications are declared at all, and whether the local
-    // identity exists.
-    const isDev = yield* ALCHEMY_DEV
-
-    // A local Worker has no cloud script, so Alchemy cannot enroll it as an
-    // Access destination and Cloudflare rejects an application born without
-    // one. Access is a deploy-time concern anyway: locally the `dev.access`
-    // stub stands in for the edge. Declaring these under `alchemy dev` would
-    // also put the production webhook bypass under the dev stage's state.
-    const access = isDev
-      ? undefined
-      : // Spike policy: any member of the organization. The split into a
-        // configuration team and a stricter operator team comes later.
-        yield* Cloudflare.Access.Application("Access", {
-          type: "self_hosted",
-          name: "Janitor",
-          sessionDuration: "8h",
-          allowedIdps: [ACCESS_GITHUB_IDENTITY_PROVIDER_ID],
-          autoRedirectToIdentity: true,
-          policies: [
-            {
-              name: `${ACCESS_GITHUB_ORGANIZATION} members`,
-              decision: "allow",
-              include: [
-                {
-                  githubOrganization: {
-                    identityProviderId: ACCESS_GITHUB_IDENTITY_PROVIDER_ID,
-                    name: ACCESS_GITHUB_ORGANIZATION,
-                  },
-                },
-              ],
-            },
-          ],
-        })
-    if (!isDev) {
-      // GitHub cannot log in. A hostname-level application beats the Worker
-      // level one, so this path skips Access and keeps its signature check.
-      yield* Cloudflare.Access.Application("WebhookBypass", {
-        type: "self_hosted",
-        name: "Janitor GitHub webhooks",
-        domain: `${DOMAIN}/api/v1/webhooks/github`,
-        appLauncherVisible: false,
-        policies: [{ name: "GitHub deliveries", decision: "bypass", include: ["everyone"] }],
-      })
-    }
-
-    // The web app is served from this Worker so the browser and the API share
-    // one origin: no CORS, and the Access cookie covers both once it exists.
-    const web = yield* Command.Build("WebBuild", {
-      command: "./node_modules/.bin/vp build",
-      cwd: "apps/web",
-      outdir: "dist",
-    })
+    // Under `alchemy dev` there is no edge: Access is not declared and the
+    // local identity stands in for it. This must be the `Config` value and
+    // not `AlchemyContext`: the bind phase is bundled into the Worker, and
+    // that service exists only in the CLI process, so reading it here fails
+    // at runtime with "Service not found: alchemy/Context".
+    const dev = yield* ALCHEMY_DEV
+    const access = yield* Access.declare({ dev, domain: DOMAIN })
 
     // A deploy leaves the local audience empty and declares no simulated
     // identity, so the runtime fallback that admits header-less requests has
     // nothing it could ever match.
-    const localDev = isDev
+    const localDev = dev
       ? { audience: LOCAL_DEV_AUDIENCE, identity: { email: LOCAL_DEV_EMAIL } }
       : undefined
 
     return {
       main: import.meta.url,
       compatibility: { flags: ["nodejs_compat"] },
-      domain: DOMAIN,
-      // The custom domain is the only entry; Access covers it.
+      // The website Worker holds the custom domain for this hostname. A route
+      // is more specific than a custom domain, so the API paths land here and
+      // everything else falls through to the website. Access protects the
+      // hostname, so both are covered without either Worker enrolling.
+      routes: [{ pattern: `${DOMAIN}/api/v1/*`, zoneName: ZONE }],
       workersDev: false,
-      ...(access === undefined ? {} : { access }),
       // Read at init from the environment: the plan-phase Config interceptor
       // only binds values it can resolve from the deploy environment.
       env: {
@@ -165,14 +117,12 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       },
       dev: {
         port: LOCAL_DEV_PORT,
+        // Fail rather than drift to another port: the web app's dev proxy
+        // and the README both name this one.
+        strictPort: true,
         ...(localDev === undefined
           ? {}
           : { access: { aud: localDev.audience, identity: localDev.identity } }),
-      },
-      assets: {
-        directory: web.outdir,
-        // Foldkit routes on the client; unmatched paths boot the app.
-        notFoundHandling: "single-page-application" as const,
       },
     }
   }),
@@ -327,7 +277,7 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
     const apiRoutes = yield* HttpRouter.toHttpEffect(
       makeRoutesLayer(
         secrets,
-        { teamDomain: ACCESS_TEAM_DOMAIN, audience: accessAudience },
+        { teamDomain: Access.TEAM_DOMAIN, audience: accessAudience },
         { localDevAudience },
       ).pipe(Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer, FetchHttpClient.layer])),
     )
@@ -352,18 +302,8 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       }),
     )
 
-    // Requests that match a built file never reach the Worker. Everything
-    // else that is not the API goes back to the asset layer, which applies
-    // the single-page fallback.
-    const assets = Cloudflare.fromCloudflareFetcher(env.ASSETS)
-    const handler = Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest
-      const url = new URL(request.originalUrl)
-      return url.pathname.startsWith("/api/v1/") ? yield* api : yield* assets.fetch(request)
-    })
-
     return {
-      fetch: cluster.provide(handler),
+      fetch: cluster.provide(api),
     }
   }).pipe(
     Effect.provide([

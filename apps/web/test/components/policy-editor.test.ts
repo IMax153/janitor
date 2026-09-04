@@ -2,8 +2,8 @@ import * as DateTime from "effect/DateTime"
 import * as Option from "effect/Option"
 import { Story } from "foldkit/test"
 import { describe, expect, it } from "vite-plus/test"
-import type { PolicyDetail } from "./labeling-wire"
-import * as PolicyEditor from "./policy-editor"
+import type { PolicyDetail } from "@/components/labeling-wire"
+import * as PolicyEditor from "@/components/policy-editor"
 
 const at = DateTime.makeUnsafe("2026-09-03T14:00:00.000Z")
 const detail: PolicyDetail = {

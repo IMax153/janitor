@@ -8,7 +8,9 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 
 import { JanitorDatabase } from "@janitor/cluster/Database"
-import ClusterWorker from "@janitor/cluster/Worker"
+import ClusterWorker, { DOMAIN } from "@janitor/cluster/Worker"
+
+const WEBSITE_DEV_PORT = 1337
 
 const DockerProviders = Layer.effect(
   Docker.Providers,
@@ -35,9 +37,17 @@ export default Alchemy.Stack(
     const database = yield* JanitorDatabase
     const cluster = yield* ClusterWorker
 
+    const website = yield* Cloudflare.Website.Foldkit("Website", {
+      rootDir: new URL("./apps/web", import.meta.url).pathname,
+      domain: DOMAIN,
+      workersDev: false,
+      dev: { port: WEBSITE_DEV_PORT, strictPort: true },
+    })
+
     return {
       databaseId: database.databaseId,
-      url: cluster.url,
+      apiUrl: cluster.url,
+      url: website.url,
     }
   }),
 )

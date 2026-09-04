@@ -63,13 +63,10 @@ export type ButtonConfig<M> = {
   readonly isDisabled?: boolean | undefined
   readonly isAutofocus?: boolean | undefined
   readonly onClick?: M | undefined
+  readonly attributes?: ReadonlyArray<Attribute<M>>
 }
 
-export const view = <M>(
-  h: HtmlBuilder<M>,
-  config: ButtonConfig<M>,
-  extraAttributes: ReadonlyArray<Attribute<M>> = [],
-): Html =>
+export const view = <M>(h: HtmlBuilder<M>, config: ButtonConfig<M>): Html =>
   FoldkitButton.view<M>(
     {
       ...(config.type === undefined ? {} : { type: config.type }),
@@ -89,7 +86,7 @@ export const view = <M>(
               ),
             ),
             h.DataAttribute("slot", "button"),
-            ...extraAttributes,
+            ...(config.attributes ?? []),
           ],
           config.label === undefined ? [] : [config.label],
         ),

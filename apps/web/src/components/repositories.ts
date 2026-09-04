@@ -715,11 +715,13 @@ const rowButton = (
   onClick: Message,
   options: { readonly isDestructive?: boolean; readonly action?: string } = {},
 ): Html =>
-  Button.view(
-    h,
-    { variant: options.isDestructive ? "destructive" : "ghost", size: "xs", onClick, label },
-    options.action === undefined ? [] : [h.DataAttribute("action", options.action)],
-  )
+  Button.view(h, {
+    variant: options.isDestructive ? "destructive" : "ghost",
+    size: "xs",
+    onClick,
+    label,
+    attributes: options.action === undefined ? [] : [h.DataAttribute("action", options.action)],
+  })
 
 const table = (
   h: HtmlBuilder<Message>,
@@ -861,16 +863,13 @@ const policiesSection = (h: HtmlBuilder<Message>, model: Model, view: Configurat
               view.rules.length === 0
                 ? h.empty
                 : rowButton(h, "Test configuration", Message.ClickedTestConfiguration()),
-              Button.view(
-                h,
-                {
-                  variant: "outline",
-                  size: "xs",
-                  onClick: Message.ClickedNewPolicy(),
-                  label: "New policy",
-                },
-                [h.DataAttribute("action", "new-policy")],
-              ),
+              Button.view(h, {
+                variant: "outline",
+                size: "xs",
+                onClick: Message.ClickedNewPolicy(),
+                label: "New policy",
+                attributes: [h.DataAttribute("action", "new-policy")],
+              }),
             ],
           ),
         ],
@@ -964,17 +963,14 @@ const rulesSection = (h: HtmlBuilder<Message>, model: Model, view: Configuration
         [h.Class("flex items-center justify-between gap-2")],
         [
           sectionTitle(h, "Rules"),
-          Button.view(
-            h,
-            {
-              variant: "outline",
-              size: "xs",
-              onClick: Message.ClickedNewRule(),
-              isDisabled: !view.policies.some((policy) => policy.publishedRevision !== null),
-              label: "New rule",
-            },
-            [h.DataAttribute("action", "new-rule")],
-          ),
+          Button.view(h, {
+            variant: "outline",
+            size: "xs",
+            onClick: Message.ClickedNewRule(),
+            isDisabled: !view.policies.some((policy) => policy.publishedRevision !== null),
+            label: "New rule",
+            attributes: [h.DataAttribute("action", "new-rule")],
+          }),
         ],
       ),
       view.rules.length === 0
@@ -1076,22 +1072,19 @@ const consentSection = (h: HtmlBuilder<Message>, model: Model): Html =>
           Option.match(model.maybeConsent, {
             onNone: () => h.empty,
             onSome: (consent) =>
-              Button.view(
-                h,
-                {
-                  variant: consent.state === "enabled" ? "destructive" : "outline",
-                  size: "xs",
-                  onClick: Message.ClickedToggleConsent(),
-                  isDisabled: model.isChangingConsent || consent.state === "draining",
-                  label:
-                    consent.state === "enabled"
-                      ? "Revoke"
-                      : consent.state === "draining"
-                        ? "Draining"
-                        : "Enable",
-                },
-                [h.DataAttribute("action", "toggle-consent")],
-              ),
+              Button.view(h, {
+                variant: consent.state === "enabled" ? "destructive" : "outline",
+                size: "xs",
+                onClick: Message.ClickedToggleConsent(),
+                isDisabled: model.isChangingConsent || consent.state === "draining",
+                label:
+                  consent.state === "enabled"
+                    ? "Revoke"
+                    : consent.state === "draining"
+                      ? "Draining"
+                      : "Enable",
+                attributes: [h.DataAttribute("action", "toggle-consent")],
+              }),
           }),
         ],
       ),

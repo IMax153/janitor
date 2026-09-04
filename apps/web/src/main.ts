@@ -9,13 +9,12 @@ import { defineMessageUnion } from "foldkit/message"
 import { evo } from "foldkit/struct"
 import * as Subscription from "foldkit/subscription"
 import * as Update from "foldkit/update"
-import { ChevronsUpDown } from "lucide"
 import * as JanitorIcon from "@/components/janitor-icon"
 import * as Repositories from "@/components/repositories"
+import * as RepositorySwitcher from "@/components/repository-switcher"
 import * as Sidebar from "@/components/ui/sidebar"
 import * as SyncButton from "@/components/sync-button"
 import * as ThemeSwitcher from "@/components/theme-switcher"
-import * as Icon from "@/lib/icons"
 import { cn } from "@/lib/utils"
 import * as Toast from "@foldkit/ui/toast"
 import * as HttpClient from "effect/unstable/http/HttpClient"
@@ -35,6 +34,7 @@ export const Model = Schema.Struct({
   sync: SyncButton.Model,
   toast: AppToast.Model,
   repositories: Repositories.Model,
+  repositorySwitcher: RepositorySwitcher.Model,
 })
 export type Model = typeof Model.Type
 
@@ -53,6 +53,9 @@ export const Message = defineMessageUnion({
   },
   GotRepositoriesMessage: {
     message: Repositories.Message,
+  },
+  GotRepositorySwitcherMessage: {
+    message: RepositorySwitcher.Message,
   },
 })
 export type Message = typeof Message.Type
@@ -168,6 +171,26 @@ const foldRepositories = Update.foldChild({
   foldOutMessage: foldRepositoriesOutMessage,
 })
 
+/** Picking in the switcher is the same act as picking in the repository list,
+ *  so it goes through the same Message and reuses the fetches that follow. */
+const foldRepositorySwitcherOutMessage = Match.type<RepositorySwitcher.OutMessage>().pipe(
+  Match.withReturnType<Update.Step<Model, Message, AppServices>>(),
+  Match.tagsExhaustive({
+    SelectedRepository:
+      ({ repositoryId }) =>
+      (model) =>
+        foldRepositories(model, Repositories.Message.Selected({ repositoryId })),
+  }),
+)
+
+const foldRepositorySwitcher = Update.foldChild({
+  update: RepositorySwitcher.update,
+  read: (model: Model) => Option.some(model.repositorySwitcher),
+  write: (model, next) => evo(model, { repositorySwitcher: () => next }),
+  toParentMessage: (message) => Message.GotRepositorySwitcherMessage({ message }),
+  foldOutMessage: foldRepositorySwitcherOutMessage,
+})
+
 const foldSyncButton = Update.foldChild({
   update: SyncButton.update,
   read: (model: Model) => Option.some(model.sync),
@@ -183,6 +206,7 @@ export const update = (model: Model, message: Message) =>
     GotSyncButtonMessage: ({ message }) => foldSyncButton(model, message),
     GotToastMessage: ({ message }) => foldToast(model, message),
     GotRepositoriesMessage: ({ message }) => foldRepositories(model, message),
+    GotRepositorySwitcherMessage: ({ message }) => foldRepositorySwitcher(model, message),
   })
 
 export type AppServices = KeyValueStore.KeyValueStore | HttpClient.HttpClient
@@ -200,6 +224,7 @@ export const init: Runtime.ApplicationInit<Model, Message, Flags, AppServices> =
       sync: sync.model,
       toast,
       repositories: repositories.model,
+      repositorySwitcher: RepositorySwitcher.init(),
     }),
     commands: [
       ...Command.mapMessages(repositories.commands, (message) =>
@@ -240,18 +265,46 @@ export const subscriptions = Subscription.aggregate<Model, Message, AppServices>
   repositoriesSubscriptions,
 )
 
-const repositorySwitcher = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
-  JanitorIcon.view(h, { className: "size-8 shrink-0 rounded-lg" }),
-  h.span(
-    [h.Class("grid min-w-0 flex-1 text-left text-sm leading-tight")],
+const brandHeader = (h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class("flex gap-2 items-center")],
     [
-      h.span([h.Class("truncate font-semibold")], ["The Janitor"]),
-      h.span([h.Class("text-muted-foreground truncate text-xs")], ["Repository Maintenance"]),
+      JanitorIcon.view(h, { className: "size-8 rounded-lg" }),
+      h.div(
+        [h.Class("flex flex-col")],
+        [
+          h.span([h.Class("font-semibold truncate")], ["The Janitor"]),
+          h.span([h.Class("text-xs text-muted-foreground truncate")], ["Repository Maintenance"]),
+        ],
+      ),
     ],
-  ),
-]
+  )
 
-const sidebarMenu = (h: HtmlBuilder<Message>): Html =>
+/** Everything the switcher renders. It groups and filters the list itself; the
+ *  page only owns which repository is current. */
+const switcherInputs = (model: Model): RepositorySwitcher.ViewInputs => ({
+  repositories: Option.getOrElse(model.repositories.repositories, () => []),
+  maybeSelectedId: model.repositories.selected,
+})
+
+const repositorySwitcher = (h: HtmlBuilder<Message>, model: Model): Html =>
+  Sidebar.menuItem(h, {
+    // The header's `p-2` and the first group's `p-2` put 16px between this and
+    // the nav below it. `Sidebar.menu` only contributes `gap-1` above, so add
+    // the missing 12px and the switcher sits evenly between the two.
+    className: "mt-3",
+    children: [
+      h.submodel({
+        slotId: "repository-switcher",
+        model: model.repositorySwitcher,
+        view: RepositorySwitcher.view,
+        toParentMessage: (message) => Message.GotRepositorySwitcherMessage({ message }),
+        viewInputs: switcherInputs(model),
+      }),
+    ],
+  })
+
+const sidebarMenu = (h: HtmlBuilder<Message>, model: Model): Html =>
   Sidebar.menu(h, {
     children: [
       Sidebar.menuItem(h, {
@@ -260,10 +313,11 @@ const sidebarMenu = (h: HtmlBuilder<Message>): Html =>
             size: "lg",
             className:
               "data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground",
-            children: [...repositorySwitcher(h), Icon.view(h, ChevronsUpDown, "ml-auto")],
+            children: [brandHeader(h)],
           }),
         ],
       }),
+      repositorySwitcher(h, model),
     ],
   })
 
@@ -282,13 +336,13 @@ const navMain = (h: HtmlBuilder<Message>): Html =>
     ],
   )
 
-const sidebarPanel = (h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
-  Sidebar.header(h, { children: [sidebarMenu(h)] }),
+const sidebarPanel = (h: HtmlBuilder<Message>, model: Model): ReadonlyArray<Html> => [
+  Sidebar.header(h, { children: [sidebarMenu(h, model)] }),
   Sidebar.content(h, { children: [navMain(h)] }),
   Sidebar.footer(h, { children: ["Footer"] }),
 ]
 
-const mainHeader = (h: HtmlBuilder<Message>, model: Model, slots: Sidebar.SidebarSlots): Html =>
+const mainHeader = (h: HtmlBuilder<Message>, model: Model): Html =>
   h.header(
     [
       h.Class(
@@ -301,14 +355,7 @@ const mainHeader = (h: HtmlBuilder<Message>, model: Model, slots: Sidebar.Sideba
         [
           h.div(
             [h.Class("flex items-center gap-1 lg:gap-2")],
-            [
-              Sidebar.trigger(h, {
-                attributes: slots.trigger,
-                className: "-ml-1",
-              }),
-              Sidebar.separator(h, { className: "h-4 w-px" }),
-              h.span([h.Class("text-sm font-medium")], ["Auto-labeling"]),
-            ],
+            [h.span([h.Class("text-sm font-medium")], ["Auto-labeling"])],
           ),
           h.div(
             [h.Class("flex items-center gap-1")],
@@ -365,14 +412,10 @@ const toasts = (h: HtmlBuilder<Message>, model: Model): Html =>
     },
   })
 
-const sidebarContent = (
-  h: HtmlBuilder<Message>,
-  model: Model,
-  slots: Sidebar.SidebarSlots,
-): ReadonlyArray<Html> => [
+const sidebarContent = (h: HtmlBuilder<Message>, model: Model): ReadonlyArray<Html> => [
   Sidebar.inset(h, {
     children: [
-      mainHeader(h, model, slots),
+      mainHeader(h, model),
       h.submodel({
         slotId: "repositories",
         model: model.repositories,
@@ -393,10 +436,10 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
     toParentMessage: (message) => Message.GotSidebarMessage({ message }),
     viewInputs: {
       side: "left",
-      variant: "inset",
+      variant: "sidebar",
       collapsible: "icon",
-      content: () => sidebarPanel(h),
-      children: (slots) => sidebarContent(h, model, slots),
+      content: () => sidebarPanel(h, model),
+      children: () => sidebarContent(h, model),
     },
   }),
 })

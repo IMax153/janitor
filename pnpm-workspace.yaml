@@ -22,11 +22,11 @@ catalog:
   "@effect/sql-pg": 4.0.0-rc.112
   "@effect/tsgo": ^0.38.0
   "@effect/vitest": 4.0.0-rc.112
-  "@foldkit/devtools": ^0.152.0
-  "@foldkit/devtools-mcp": ^0.18.0
-  "@foldkit/oxlint-plugin": ^0.8.0
-  "@foldkit/ui": ^0.152.0
-  "@foldkit/vite-plugin": ^0.18.0
+  "@foldkit/devtools": ^0.157.0
+  "@foldkit/devtools-mcp": ^0.19.3
+  "@foldkit/oxlint-plugin": ^0.12.0
+  "@foldkit/ui": ^0.157.0
+  "@foldkit/vite-plugin": ^0.20.1
   "@fontsource-variable/geist": ^5.3.0
   "@tailwindcss/vite": ^4.3.3
   "@testcontainers/postgresql": 12.1.0
@@ -35,7 +35,7 @@ catalog:
   clsx: ^2.1.1
   effect: 4.0.0-rc.112
   happy-dom: ^20.0.0
-  foldkit: ^0.152.0
+  foldkit: ^0.157.0
   lucide: ^1.33.0
   tailwind-merge: ^3.6.0
   tailwindcss: ^4.3.3
@@ -77,11 +77,11 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/hetzner@1.0.0-rc.8"
   - "@distilled.cloud/neon@1.0.0-rc.8"
   - "@distilled.cloud/planetscale@1.0.0-rc.8"
-  - "@foldkit/devtools@0.152.0"
-  - "@foldkit/ui@0.152.0"
-  - "@foldkit/vite-plugin@0.18.0"
+  - "@foldkit/devtools@0.157.0"
+  - "@foldkit/ui@0.157.0"
+  - "@foldkit/vite-plugin@0.20.1"
   - alchemy@2.0.0-beta.75
-  - foldkit@0.152.0
+  - foldkit@0.157.0
 
 patchedDependencies:
   "@alchemy.run/cloudflare-runtime@2.0.0-beta.75": patches/@alchemy.run__cloudflare-runtime@2.0.0-beta.75.patch

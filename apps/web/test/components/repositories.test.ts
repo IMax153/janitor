@@ -2,8 +2,8 @@ import * as DateTime from "effect/DateTime"
 import * as Option from "effect/Option"
 import { Story } from "foldkit/test"
 import { describe, expect, it } from "vite-plus/test"
-import { describePlan, describeRevision } from "./labeling-wire"
-import * as Repositories from "./repositories"
+import { describePlan, describeRevision } from "@/components/labeling-wire"
+import * as Repositories from "@/components/repositories"
 
 const at = DateTime.makeUnsafe("2026-09-03T14:00:00.000Z")
 const one: Repositories.RepositoryOverview = {

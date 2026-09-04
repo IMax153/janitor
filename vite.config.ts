@@ -46,9 +46,10 @@ export default defineConfig({
         command: "vp exec alchemy dev",
         cache: false,
       },
-      "dev:web": {
-        command: "vp run dev",
-        cwd: "apps/web",
+      seed: {
+        // Re-seeds the running dev container without restarting the stack.
+        // `alchemy dev` also runs this, but only when the fixtures change.
+        command: "vp exec node apps/cluster/seed/main.ts",
         cache: false,
       },
       "cloudflare:cluster-spike": {

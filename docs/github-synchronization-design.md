@@ -8,7 +8,9 @@ This design assumes Janitor can connect from Cloudflare Workers and Durable Obje
 
 ## Decision
 
-Deploy one Cloudflare backend Worker. It owns these logical boundaries in one deployment:
+Deploy two Cloudflare Workers on one hostname. A website Worker holds the custom domain and serves the Foldkit app as static assets; it runs no code of ours. The backend Worker takes `/api/v1/*` off that hostname with a zone route, which is more specific than a custom domain and therefore wins. One origin, so no CORS, and the Access cookie covers both. The Access application protects the hostname rather than a Worker destination, so the edge decides before routing and both Workers are covered.
+
+The backend Worker owns these logical boundaries in one deployment:
 
 - signed GitHub webhook ingress;
 - Cloudflare Queue production and consumption;
@@ -88,7 +90,7 @@ Access decides who may enter a human role boundary. Janitor also verifies that e
 
 State-changing browser requests validate Origin and a CSRF token bound to the Access subject and API audience. Normal sessions last at most eight hours and operator sessions at most one hour. The runbook includes immediate Access session revocation for urgent team removal. The GitHub webhook route bypasses Access and verifies the GitHub signature over the raw body.
 
-Local development has no edge. Under `alchemy dev` the Worker's bind phase reads `ALCHEMY_DEV`, which only that command sets, and declares a simulated Access context with the audience `local-dev` together with an env binding carrying the same value. The middleware admits a request without an assertion only when that binding is set and the request's Access context carries exactly that audience. A deploy leaves the binding empty, so the path is unreachable there; a supplied assertion is always verified regardless. Local identities are attributed to the issuer `local-dev`. The Access applications themselves are declared only on a deploy: a local Worker has no cloud script to enroll as an Access destination, and the dev stage must not own the production webhook bypass.
+Local development has no edge. Under `alchemy dev` the Worker's bind phase reads `ALCHEMY_DEV`, which only that command sets, and declares a simulated Access context with the audience `local-dev` together with an env binding carrying the same value. The middleware admits a request without an assertion only when that binding is set and the request's Access context carries exactly that audience. A deploy leaves the binding empty, so the path is unreachable there; a supplied assertion is always verified regardless. Local identities are attributed to the issuer `local-dev`. The Access applications are declared only on a deploy: there is no edge locally, and the dev stage must not own the production webhook bypass.
 
 The Queue consumer and journal repository run in the same Worker deployment. They need no internal authentication hop or second delivery signature.
 

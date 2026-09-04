@@ -43,53 +43,48 @@ export type Message = typeof Message.Type
 
 // MOUNT
 
-export const MountPolicySourceEditor = Mount.defineStream(
-  "MountPolicySourceEditor",
-  {
+export const MountPolicySourceEditor = Mount.defineStream("MountPolicySourceEditor", {
+  args: {
     id: Schema.String,
     initialSource: Schema.String,
     catalog: Schema.Array(FactDescription),
     policyNames: Schema.Array(Schema.String),
   },
-  Message.MountedEditor,
-  Message.FailedToMountEditor,
-  Message.EditedSource,
-)(
-  ({ initialSource, catalog, policyNames }) =>
-    (element) =>
-      Stream.callback((queue) =>
-        Effect.acquireRelease(
-          Effect.tryPromise({
-            try: async () => {
-              if (!(element instanceof HTMLElement)) {
-                throw new Error("The policy editor host must be an HTMLElement")
-              }
-              const { createPolicySourceEditor } = await import("./editor")
-              const editor = createPolicySourceEditor({
-                element,
-                initialSource,
-                context: { catalog, policyNames },
-                onChange: (source) => {
-                  Queue.offerUnsafe(queue, Message.EditedSource({ source }))
-                },
-              })
-              Queue.offerUnsafe(queue, Message.MountedEditor())
-              return editor
-            },
-            catch: (error) =>
-              error instanceof Error ? error.message : "The policy editor failed to mount",
+  messages: [Message.MountedEditor, Message.FailedToMountEditor, Message.EditedSource],
+  execute: ({ element, initialSource, catalog, policyNames }) =>
+    Stream.callback((queue) =>
+      Effect.acquireRelease(
+        Effect.tryPromise({
+          try: async () => {
+            if (!(element instanceof HTMLElement)) {
+              throw new Error("The policy editor host must be an HTMLElement")
+            }
+            const { createPolicySourceEditor } = await import("./editor")
+            const editor = createPolicySourceEditor({
+              element,
+              initialSource,
+              context: { catalog, policyNames },
+              onChange: (source) => {
+                Queue.offerUnsafe(queue, Message.EditedSource({ source }))
+              },
+            })
+            Queue.offerUnsafe(queue, Message.MountedEditor())
+            return editor
+          },
+          catch: (error) =>
+            error instanceof Error ? error.message : "The policy editor failed to mount",
+        }),
+        (editor) => Effect.sync(() => editor.destroy()),
+      ).pipe(
+        Effect.flatMap(() => Effect.never),
+        Effect.catch((reason) =>
+          Effect.sync(() => {
+            Queue.offerUnsafe(queue, Message.FailedToMountEditor({ reason }))
           }),
-          (editor) => Effect.sync(() => editor.destroy()),
-        ).pipe(
-          Effect.flatMap(() => Effect.never),
-          Effect.catch((reason) =>
-            Effect.sync(() => {
-              Queue.offerUnsafe(queue, Message.FailedToMountEditor({ reason }))
-            }),
-          ),
         ),
       ),
-)
+    ),
+})
 
 // INIT
 

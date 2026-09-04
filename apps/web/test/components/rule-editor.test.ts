@@ -2,8 +2,8 @@ import * as DateTime from "effect/DateTime"
 import * as Option from "effect/Option"
 import { Story } from "foldkit/test"
 import { describe, expect, it } from "vite-plus/test"
-import type { PolicyRecord, RuleRecord } from "./labeling-wire"
-import * as RuleEditor from "./rule-editor"
+import type { PolicyRecord, RuleRecord } from "@/components/labeling-wire"
+import * as RuleEditor from "@/components/rule-editor"
 
 const at = DateTime.makeUnsafe("2026-09-03T14:00:00.000Z")
 const published: PolicyRecord = {
