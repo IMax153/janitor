@@ -1,4 +1,5 @@
 import * as AlchemyCloudflareCluster from "@effect/platform-cloudflare/AlchemyCloudflareCluster"
+import { ALCHEMY_DEV } from "alchemy"
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as Command from "alchemy/Command"
 import * as Postgres from "alchemy/SQL/Postgres"
@@ -76,42 +77,63 @@ const ACCESS_TEAM_DOMAIN = "effectful.cloudflareaccess.com"
 const ACCESS_GITHUB_IDENTITY_PROVIDER_ID = "0d007daa-be1b-4e31-b538-98a8048f6863"
 const ACCESS_GITHUB_ORGANIZATION = "Effectful-Tech"
 const DOMAIN = "janitor.effectful.co"
+/**
+ * The audience `alchemy dev` stamps on its simulated Access context. Real
+ * audiences are 64 hex characters, so this can never match a deployed one.
+ */
+const LOCAL_DEV_AUDIENCE = "local-dev"
+const LOCAL_DEV_EMAIL = "dev@janitor.local"
+const LOCAL_DEV_PORT = 8787
 
 export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
   "ClusterWorker",
   Effect.gen(function* () {
-    // Spike policy: any member of the organization. The split into a
-    // configuration team and a stricter operator team comes later.
-    const access = yield* Cloudflare.Access.Application("Access", {
-      type: "self_hosted",
-      name: "Janitor",
-      sessionDuration: "8h",
-      allowedIdps: [ACCESS_GITHUB_IDENTITY_PROVIDER_ID],
-      autoRedirectToIdentity: true,
-      policies: [
-        {
-          name: `${ACCESS_GITHUB_ORGANIZATION} members`,
-          decision: "allow",
-          include: [
+    // Only `alchemy dev` sets this. It decides two things: whether the
+    // Access applications are declared at all, and whether the local
+    // identity exists.
+    const isDev = yield* ALCHEMY_DEV
+
+    // A local Worker has no cloud script, so Alchemy cannot enroll it as an
+    // Access destination and Cloudflare rejects an application born without
+    // one. Access is a deploy-time concern anyway: locally the `dev.access`
+    // stub stands in for the edge. Declaring these under `alchemy dev` would
+    // also put the production webhook bypass under the dev stage's state.
+    const access = isDev
+      ? undefined
+      : // Spike policy: any member of the organization. The split into a
+        // configuration team and a stricter operator team comes later.
+        yield* Cloudflare.Access.Application("Access", {
+          type: "self_hosted",
+          name: "Janitor",
+          sessionDuration: "8h",
+          allowedIdps: [ACCESS_GITHUB_IDENTITY_PROVIDER_ID],
+          autoRedirectToIdentity: true,
+          policies: [
             {
-              githubOrganization: {
-                identityProviderId: ACCESS_GITHUB_IDENTITY_PROVIDER_ID,
-                name: ACCESS_GITHUB_ORGANIZATION,
-              },
+              name: `${ACCESS_GITHUB_ORGANIZATION} members`,
+              decision: "allow",
+              include: [
+                {
+                  githubOrganization: {
+                    identityProviderId: ACCESS_GITHUB_IDENTITY_PROVIDER_ID,
+                    name: ACCESS_GITHUB_ORGANIZATION,
+                  },
+                },
+              ],
             },
           ],
-        },
-      ],
-    })
-    // GitHub cannot log in. A hostname-level application beats the Worker
-    // level one, so this path skips Access and keeps its signature check.
-    yield* Cloudflare.Access.Application("WebhookBypass", {
-      type: "self_hosted",
-      name: "Janitor GitHub webhooks",
-      domain: `${DOMAIN}/api/v1/webhooks/github`,
-      appLauncherVisible: false,
-      policies: [{ name: "GitHub deliveries", decision: "bypass", include: ["everyone"] }],
-    })
+        })
+    if (!isDev) {
+      // GitHub cannot log in. A hostname-level application beats the Worker
+      // level one, so this path skips Access and keeps its signature check.
+      yield* Cloudflare.Access.Application("WebhookBypass", {
+        type: "self_hosted",
+        name: "Janitor GitHub webhooks",
+        domain: `${DOMAIN}/api/v1/webhooks/github`,
+        appLauncherVisible: false,
+        policies: [{ name: "GitHub deliveries", decision: "bypass", include: ["everyone"] }],
+      })
+    }
 
     // The web app is served from this Worker so the browser and the API share
     // one origin: no CORS, and the Access cookie covers both once it exists.
@@ -120,16 +142,33 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
       cwd: "apps/web",
       outdir: "dist",
     })
+
+    // A deploy leaves the local audience empty and declares no simulated
+    // identity, so the runtime fallback that admits header-less requests has
+    // nothing it could ever match.
+    const localDev = isDev
+      ? { audience: LOCAL_DEV_AUDIENCE, identity: { email: LOCAL_DEV_EMAIL } }
+      : undefined
+
     return {
       main: import.meta.url,
       compatibility: { flags: ["nodejs_compat"] },
       domain: DOMAIN,
       // The custom domain is the only entry; Access covers it.
       workersDev: false,
-      access,
+      ...(access === undefined ? {} : { access }),
       // Read at init from the environment: the plan-phase Config interceptor
       // only binds values it can resolve from the deploy environment.
-      env: { ACCESS_AUD: access.aud },
+      env: {
+        ACCESS_AUD: access?.aud ?? "",
+        LOCAL_DEV_AUDIENCE: localDev?.audience ?? "",
+      },
+      dev: {
+        port: LOCAL_DEV_PORT,
+        ...(localDev === undefined
+          ? {}
+          : { access: { aud: localDev.audience, identity: localDev.identity } }),
+      },
       assets: {
         directory: web.outdir,
         // Foldkit routes on the client; unmatched paths boot the app.
@@ -280,10 +319,17 @@ export default class ClusterWorker extends Cloudflare.Worker<ClusterWorker>()(
     // At runtime an empty audience matches no assertion, so a missing binding
     // fails closed rather than open.
     const accessAudience = typeof env.ACCESS_AUD === "string" ? env.ACCESS_AUD : ""
+    // Empty everywhere except under `alchemy dev`; see the bind phase.
+    const localDevAudience =
+      typeof env.LOCAL_DEV_AUDIENCE === "string" && env.LOCAL_DEV_AUDIENCE.length > 0
+        ? env.LOCAL_DEV_AUDIENCE
+        : undefined
     const apiRoutes = yield* HttpRouter.toHttpEffect(
-      makeRoutesLayer(secrets, { teamDomain: ACCESS_TEAM_DOMAIN, audience: accessAudience }).pipe(
-        Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer, FetchHttpClient.layer]),
-      ),
+      makeRoutesLayer(
+        secrets,
+        { teamDomain: ACCESS_TEAM_DOMAIN, audience: accessAudience },
+        { localDevAudience },
+      ).pipe(Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer, FetchHttpClient.layer])),
     )
     // Route errors that know their response (400 for a malformed request,
     // 404 for no route) become that response; anything else is a 500.

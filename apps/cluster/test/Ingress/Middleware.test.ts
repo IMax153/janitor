@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as RuntimeContext from "alchemy/RuntimeContext"
+import * as Context from "effect/Context"
 import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -16,6 +17,8 @@ import {
 import {
   AccessMiddlewareLayer,
   CurrentAccessIdentity,
+  LOCAL_DEV_ISSUER,
+  makeAccessMiddlewareLayer,
   RateLimitMiddlewareLayer,
 } from "../../src/Ingress/Middleware.ts"
 
@@ -191,6 +194,25 @@ describe("RateLimitMiddlewareLayer", () => {
 })
 
 describe("AccessMiddleware", () => {
+  /** The execution context a request carries; `undefined` means no Access. */
+  const executionContext = (
+    access: { aud: string; email?: string } | undefined,
+  ): Cloudflare.Workers.WorkerExecutionContext["Service"] => ({
+    raw: {} as never,
+    waitUntil: () => Effect.void,
+    passThroughOnException: () => Effect.void,
+    cache: { purge: () => Effect.die("unused") },
+    access: Effect.succeed(
+      access === undefined
+        ? undefined
+        : {
+            aud: access.aud,
+            getIdentity: () =>
+              Effect.succeed(access.email === undefined ? undefined : { email: access.email }),
+          },
+    ),
+  })
+
   const identity: AccessIdentity = {
     issuer: "https://team.cloudflareaccess.test",
     subject: "user-123",
@@ -208,6 +230,10 @@ describe("AccessMiddleware", () => {
     ).pipe(
       Layer.provide(AccessMiddlewareLayer),
       Layer.provide(Layer.succeed(AccessVerifier, { verify })),
+      // Production never consults the context; an absent one proves it.
+      Layer.provide(
+        Layer.succeed(Cloudflare.Workers.WorkerExecutionContext, executionContext(undefined)),
+      ),
     )
 
   const withAccessHandler = <A, E, R>(
@@ -216,7 +242,7 @@ describe("AccessMiddleware", () => {
   ) =>
     Effect.acquireUseRelease(
       Effect.sync(() => HttpRouter.toWebHandler(makeAccessLayer(verify), { disableLogger: true })),
-      ({ handler }) => use(handler),
+      ({ handler }) => use((request) => handler(request, Context.empty())),
       ({ dispose }) => Effect.promise(dispose),
     )
 
@@ -288,6 +314,130 @@ describe("AccessMiddleware", () => {
           )
           assert.deepStrictEqual(seen, ["h.p.s"])
         }),
+    )
+  })
+
+  describe("local development fallback", () => {
+    const LOCAL_AUDIENCE = "local-dev"
+    const HEX_AUDIENCE = "a".repeat(64)
+
+    const makeLocalLayer = (
+      localDevAudience: string | undefined,
+      verify: AccessVerifier["Service"]["verify"],
+      access: { aud: string; email?: string } | undefined,
+    ) =>
+      HttpRouter.add(
+        "GET",
+        "/whoami",
+        Effect.map(CurrentAccessIdentity, (identity) =>
+          HttpServerResponse.text(`${identity.issuer} ${identity.subject}`),
+        ),
+      ).pipe(
+        Layer.provide(makeAccessMiddlewareLayer({ localDevAudience })),
+        Layer.provide(Layer.succeed(AccessVerifier, { verify })),
+        Layer.provide(
+          Layer.succeed(Cloudflare.Workers.WorkerExecutionContext, executionContext(access)),
+        ),
+      )
+
+    const request = (headers: Record<string, string> = {}) =>
+      new Request("https://example.com/whoami", { headers })
+
+    const respond = (
+      localDevAudience: string | undefined,
+      verify: AccessVerifier["Service"]["verify"],
+      access: { aud: string; email?: string } | undefined,
+      headers?: Record<string, string>,
+    ) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() =>
+          HttpRouter.toWebHandler(makeLocalLayer(localDevAudience, verify, access), {
+            disableLogger: true,
+          }),
+        ),
+        ({ handler }) => Effect.promise(() => handler(request(headers), Context.empty())),
+        ({ dispose }) => Effect.promise(dispose),
+      )
+
+    const mustNotVerify = () => Effect.die("must not verify")
+
+    it.effect("answers 401 without a header and without any Access context", () =>
+      Effect.gen(function* () {
+        const response = yield* respond(LOCAL_AUDIENCE, mustNotVerify, undefined)
+        assert.strictEqual(response.status, 401)
+      }),
+    )
+
+    it.effect("admits the simulated identity when the audience matches", () =>
+      Effect.gen(function* () {
+        const response = yield* respond(LOCAL_AUDIENCE, mustNotVerify, {
+          aud: LOCAL_AUDIENCE,
+          email: "dev@janitor.local",
+        })
+        assert.strictEqual(response.status, 200)
+        assert.strictEqual(
+          yield* Effect.promise(() => response.text()),
+          `${LOCAL_DEV_ISSUER} dev@janitor.local`,
+        )
+      }),
+    )
+
+    it.effect("ignores a simulated context when built without a local audience", () =>
+      Effect.gen(function* () {
+        // The deploy configuration: the bind phase leaves the audience unset.
+        const unset = yield* respond(undefined, mustNotVerify, {
+          aud: LOCAL_AUDIENCE,
+          email: "dev@janitor.local",
+        })
+        assert.strictEqual(unset.status, 401)
+
+        const empty = yield* respond("", mustNotVerify, {
+          aud: LOCAL_AUDIENCE,
+          email: "dev@janitor.local",
+        })
+        assert.strictEqual(empty.status, 401)
+      }),
+    )
+
+    it.effect("answers 401 when the context carries any other audience", () =>
+      Effect.gen(function* () {
+        const response = yield* respond(LOCAL_AUDIENCE, mustNotVerify, {
+          aud: HEX_AUDIENCE,
+          email: "dev@janitor.local",
+        })
+        assert.strictEqual(response.status, 401)
+      }),
+    )
+
+    it.effect("still verifies a supplied header while the fallback is live", () =>
+      Effect.gen(function* () {
+        const seen: Array<string> = []
+        const rejected = yield* respond(
+          LOCAL_AUDIENCE,
+          (assertion) =>
+            Effect.sync(() => {
+              seen.push(assertion)
+            }).pipe(
+              Effect.andThen(Effect.fail(new AccessAssertionRejected({ reason: "expired" }))),
+            ),
+          { aud: LOCAL_AUDIENCE, email: "dev@janitor.local" },
+          { "cf-access-jwt-assertion": "a.b.c" },
+        )
+        assert.strictEqual(rejected.status, 401)
+        assert.deepStrictEqual(seen, ["a.b.c"])
+
+        const accepted = yield* respond(
+          LOCAL_AUDIENCE,
+          () => Effect.succeed(identity),
+          { aud: LOCAL_AUDIENCE, email: "dev@janitor.local" },
+          { "cf-access-jwt-assertion": "a.b.c" },
+        )
+        assert.strictEqual(accepted.status, 200)
+        assert.strictEqual(
+          yield* Effect.promise(() => accepted.text()),
+          "https://team.cloudflareaccess.test user-123",
+        )
+      }),
     )
   })
 })

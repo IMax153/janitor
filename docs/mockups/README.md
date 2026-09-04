@@ -70,3 +70,29 @@ sidebar styles and larger control sizes.
 | `6c-rules.html` | Same three panes as 5a: rule list grouped by exclusive group with enable switches, the selected rule as a form (label, policy, no-match choice, group, drag-to-order), and an inspector with policy, tracks, preview counts, and history. |
 | `6d-activity.html` | Day-grouped feed mixing label changes and configuration changes, with a status pill and a one-line reason under each item. |
 | `6e-home.html` | Four stats, one attention banner, recent label changes, synchronization per track, AI toggle, and a needs-attention list. |
+
+## The Tailwind port
+
+`tw/` holds the chosen design (`5a-workbench-sidebar.html`) rewritten with
+Tailwind v4 utilities, ready to move into Foldkit a component at a time. The
+CSS-file mockups above stay as they are; they are the reference, not the
+source.
+
+| File | What it is |
+| --- | --- |
+| `tw/policy-workbench.html` | The policy screen. Regions are separated by comments naming the Foldkit component each will become. |
+| `tw/theme.css` | Tailwind entry. The token block is copied from `apps/web/src/styles.css`, plus the status colours (`ok`, `warn`, `info`) and the JSON syntax colours the app does not define yet. |
+| `tw/policy-workbench.css` | Compiled output, checked in so the page opens without a build step. |
+| `tw/build.mjs` | Recompiles it: `node docs/mockups/tw/build.mjs`. There is no Tailwind CLI in the workspace, so this drives the compiler the Vite plugin uses. |
+
+Porting notes:
+
+- The status and syntax colours are the only tokens the app is missing. Add
+  them to `apps/web/src/styles.css` first, then delete them from `theme.css`.
+- The editor markup is a stand-in for CodeMirror's DOM. Only the frame, the
+  gutter, and the completion popup are worth porting; CodeMirror renders the
+  lines.
+- Repeated utility strings (the nav link, the policy row, the pill) are the
+  seams. Each is one Foldkit view function.
+- Label colours come from GitHub, so they stay inline styles rather than
+  classes.

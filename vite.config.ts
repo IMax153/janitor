@@ -46,6 +46,11 @@ export default defineConfig({
         command: "vp exec alchemy dev",
         cache: false,
       },
+      "dev:web": {
+        command: "vp run dev",
+        cwd: "apps/web",
+        cache: false,
+      },
       "cloudflare:cluster-spike": {
         command: "vp exec alchemy deploy --stage cluster-spike",
         cache: false,
